@@ -70,7 +70,8 @@ const DEFAULT_SETTINGS = {
   avoid_same_family: '1',
   event_name: 'Intercambio Familiar',
   min_quinielas: '1',
-  quiniela_cost_cents: '0', // costo por quiniela, en centavos; se paga el día de la cena
+  quiniela_cost_cents: '0', // costo por quiniela, en centavos; se paga antes de iniciar el sorteo
+  payment_contact: 'Richi', // a quién buscar para pagar las quinielas antes de la cena
 };
 for (const [k, v] of Object.entries(DEFAULT_SETTINGS)) {
   db.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)').run(k, v);
@@ -333,6 +334,7 @@ app.get(
       avoidSameFamily: getSetting('avoid_same_family') === '1',
       minQuinielas: Number(getSetting('min_quinielas')),
       quinielaCostCents: Number(getSetting('quiniela_cost_cents')),
+      paymentContact: getSetting('payment_contact') || '',
       guests,
       stats: { guests: guests.length, drawn, quinielas: totalQ, withQuiniela, potCents },
       me: meInfo(req.me),
@@ -387,6 +389,27 @@ app.get(
   })
 );
 
+// Una quiniela válida: cada invitado regala exactamente una vez y recibe exactamente una vez.
+function validatePredictions(predictions) {
+  const guests = allGuests();
+  const byId = new Map(guests.map((g) => [g.id, g]));
+  const avoid = getSetting('avoid_same_family') === '1';
+  if (!Array.isArray(predictions) || predictions.length !== guests.length) throw new HttpError(400, 'La quiniela debe estar completa: un destinatario para cada invitado.');
+  const givers = new Set();
+  const receivers = new Set();
+  for (const p of predictions) {
+    const g = byId.get(Number(p.giver_id));
+    const r = byId.get(Number(p.receiver_id));
+    if (!g || !r) throw new HttpError(400, 'Hay invitados inválidos en la quiniela.');
+    if (g.id === r.id) throw new HttpError(400, `${g.name} no puede regalarse a sí mismo.`);
+    if (avoid && g.family_id === r.family_id) throw new HttpError(400, `${g.name} y ${r.name} son de la misma familia.`);
+    if (givers.has(g.id)) throw new HttpError(400, `${g.name} aparece dos veces como quien regala.`);
+    if (receivers.has(r.id)) throw new HttpError(400, `${r.name} recibe más de un regalo.`);
+    givers.add(g.id);
+    receivers.add(r.id);
+  }
+}
+
 app.post(
   '/api/quinielas',
   wrap((req) => {
@@ -402,29 +425,35 @@ app.post(
     if (acceptedCostCents !== undefined && Number(acceptedCostCents) !== costCents) {
       throw new HttpError(409, `El costo por quiniela cambió a ${formatMoney(costCents)}. Revísalo y vuelve a guardar.`);
     }
-    const guests = allGuests();
-    const byId = new Map(guests.map((g) => [g.id, g]));
-    const avoid = getSetting('avoid_same_family') === '1';
-    if (!Array.isArray(predictions) || predictions.length !== guests.length) throw new HttpError(400, 'La quiniela debe estar completa: un destinatario para cada invitado.');
-    const givers = new Set();
-    const receivers = new Set();
-    for (const p of predictions) {
-      const g = byId.get(Number(p.giver_id));
-      const r = byId.get(Number(p.receiver_id));
-      if (!g || !r) throw new HttpError(400, 'Hay invitados inválidos en la quiniela.');
-      if (g.id === r.id) throw new HttpError(400, `${g.name} no puede regalarse a sí mismo.`);
-      if (avoid && g.family_id === r.family_id) throw new HttpError(400, `${g.name} y ${r.name} son de la misma familia.`);
-      if (givers.has(g.id)) throw new HttpError(400, `${g.name} aparece dos veces como quien regala.`);
-      if (receivers.has(r.id)) throw new HttpError(400, `${r.name} recibe más de un regalo.`);
-      givers.add(g.id);
-      receivers.add(r.id);
-    }
+    validatePredictions(predictions);
     const qName = String(name || '').trim().slice(0, 60) || `Quiniela de ${me.name}`;
     const id = tx(() => {
       const { lastInsertRowid } = db.prepare('INSERT INTO quinielas (author_id, name, cost_cents) VALUES (?, ?, ?)').run(me.id, qName, costCents);
       const ins = db.prepare('INSERT INTO predictions (quiniela_id, giver_id, receiver_id) VALUES (?, ?, ?)');
       for (const p of predictions) ins.run(lastInsertRowid, Number(p.giver_id), Number(p.receiver_id));
       return Number(lastInsertRowid);
+    });
+    return { ok: true, id };
+  })
+);
+
+// Editar una quiniela propia mientras las quinielas sigan abiertas. Conserva su costo original.
+app.put(
+  '/api/quinielas/:id',
+  wrap((req) => {
+    const me = requireMe(req);
+    if (getSetting('phase') !== 'open') throw new HttpError(400, 'Las quinielas se cerraron cuando inició el sorteo; ya no se pueden editar.');
+    const id = Number(req.params.id);
+    const q = db.prepare('SELECT id FROM quinielas WHERE id = ? AND author_id = ?').get(id, me.id);
+    if (!q) throw new HttpError(404, 'Quiniela no encontrada.');
+    const { name, predictions } = req.body || {};
+    validatePredictions(predictions);
+    const qName = String(name || '').trim().slice(0, 60) || `Quiniela de ${me.name}`;
+    tx(() => {
+      db.prepare('UPDATE quinielas SET name = ? WHERE id = ?').run(qName, id);
+      db.prepare('DELETE FROM predictions WHERE quiniela_id = ?').run(id);
+      const ins = db.prepare('INSERT INTO predictions (quiniela_id, giver_id, receiver_id) VALUES (?, ?, ?)');
+      for (const p of predictions) ins.run(id, Number(p.giver_id), Number(p.receiver_id));
     });
     return { ok: true, id };
   })
@@ -533,6 +562,7 @@ admin.get(
       avoidSameFamily: getSetting('avoid_same_family') === '1',
       minQuinielas: Number(getSetting('min_quinielas')),
       quinielaCostCents: Number(getSetting('quiniela_cost_cents')),
+      paymentContact: getSetting('payment_contact') || '',
       guests,
       listText,
     };
@@ -542,7 +572,7 @@ admin.get(
 admin.post(
   '/settings',
   wrap((req) => {
-    const { eventName, avoidSameFamily, minQuinielas, quinielaCostCents } = req.body || {};
+    const { eventName, avoidSameFamily, minQuinielas, quinielaCostCents, paymentContact } = req.body || {};
     if (quinielaCostCents !== undefined) {
       const c = Math.round(Number(quinielaCostCents));
       if (!Number.isFinite(c) || c < 0 || c > MAX_COST_CENTS) throw new HttpError(400, 'El costo por quiniela no es válido.');
@@ -551,6 +581,7 @@ admin.post(
       }
       setSetting('quiniela_cost_cents', c);
     }
+    if (paymentContact !== undefined) setSetting('payment_contact', String(paymentContact).trim().slice(0, 40));
     if (eventName !== undefined) setSetting('event_name', String(eventName).trim().slice(0, 80) || 'Intercambio Familiar');
     if (minQuinielas !== undefined) setSetting('min_quinielas', Math.max(0, Math.min(20, Number(minQuinielas) || 0)));
     if (avoidSameFamily !== undefined) {

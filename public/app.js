@@ -1,7 +1,7 @@
 'use strict';
 /* Vista de invitados. Depende de ui.js. */
 
-const { $, $$, esc, icon, avatar, relTime, plural, money, request, sheet, confirm, toast, busy } = ui;
+const { $, $$, esc, icon, avatar, relTime, plural, money, request, sheet, confirm, toast, busy, hero, confetti } = ui;
 
 const app = $('#app');
 const nav = { bar: $('#navbar'), leading: $('#nav-leading'), title: $('#nav-title'), trailing: $('#nav-trailing') };
@@ -18,6 +18,15 @@ let reloadQueued = null;
 
 const api = (url, opts) => request(url, opts);
 const firstName = (n) => String(n).trim().split(/\s+/)[0];
+
+/** Renglón "quien da → quien recibe", con etiquetas explícitas. */
+function pairRow(giver, receiver, { hits = null } = {}) {
+  return `<div class="pair-row${hits === true ? ' hit' : hits === false ? ' miss' : ''}">
+      <span class="pair-side">${avatar(giver)}<span class="pair-text"><span class="pair-label">Da</span><span class="pair-name">${esc(giver)}</span></span></span>
+      <span class="pair-mid" aria-label="le regala a">${icon('gift')}<span>le regala a</span></span>
+      <span class="pair-side to"><span class="pair-text"><span class="pair-label">Recibe</span><span class="pair-name">${esc(receiver)}</span></span>${avatar(receiver)}</span>
+    </div>`;
+}
 
 ui.watchNavbar(nav.bar);
 
@@ -94,11 +103,20 @@ function renderLogin() {
   setNav({ title: state.eventName });
   setView(
     'login',
-    `<div class="large-title"><h1>${esc(state.eventName)}</h1><p>Elige tu nombre para entrar.</p></div>
+    `${hero({ eyebrow: 'Bienvenido', title: state.eventName, sub: 'Para entrar, busca tu propio nombre en la lista y tócalo.' })}
      ${
        state.guests.length
-         ? `<label class="search">${icon('search')}<span class="sr-only">Buscar</span>
-              <input class="field" id="search" type="search" placeholder="Buscar" autocomplete="off" autocorrect="off" spellcheck="false" value="${esc(search)}">
+         ? `<section class="section login-help">
+              <div class="group">
+                <div class="cell has-icon"><span class="step-dot current">1</span>
+                  <span class="cell-body"><span class="cell-title">Toca <b>tu</b> nombre</span><span class="cell-sub">El tuyo, no el de alguien más de tu familia.</span></span></div>
+                <div class="cell has-icon"><span class="step-dot">2</span>
+                  <span class="cell-body"><span class="cell-title">Crea un PIN de 4 dígitos</span><span class="cell-sub">Con él vuelves a entrar cuando quieras.</span></span></div>
+              </div>
+            </section>
+            <div class="section-header big login-ask"><h2>¿Quién eres tú?</h2></div>
+            <label class="search">${icon('search')}<span class="sr-only">Busca tu nombre</span>
+              <input class="field" id="search" type="search" placeholder="Escribe tu nombre" autocomplete="off" autocorrect="off" spellcheck="false" value="${esc(search)}">
               <button class="clear" id="search-clear" type="button" aria-label="Borrar búsqueda" ${search ? '' : 'hidden'}>${icon('xmark')}</button>
             </label>`
          : ''
@@ -142,7 +160,7 @@ function renderNames() {
     groups.get(g.family).push(g);
   }
   if (!groups.size) {
-    box.innerHTML = `<div class="empty">${icon('search')}<h2>Sin resultados</h2><p>No encontramos “${esc(search.trim())}”.</p></div>`;
+    box.innerHTML = `<div class="empty">${icon('search')}<h2>Sin resultados</h2><p>No encontramos “${esc(search.trim())}”. Revisa cómo está escrito o pregúntale al organizador.</p></div>`;
     return;
   }
   box.innerHTML = [...groups]
@@ -153,8 +171,8 @@ function renderNames() {
           .map(
             (g) => `<button class="cell has-avatar" type="button" data-guest="${g.id}">
               ${avatar(g.name)}
-              <span class="cell-body"><span class="cell-title">${esc(g.name)}</span></span>
-              <span class="cell-trailing">${g.claimed ? `<span class="sr-only">Ya tiene PIN</span>${icon('lock')}` : ''}${icon('chevronRight', 'chevron')}</span>
+              <span class="cell-body"><span class="cell-title">${esc(g.name)}</span>${g.claimed ? '<span class="cell-sub">Ya entró con su PIN</span>' : ''}</span>
+              <span class="cell-trailing">${g.claimed ? icon('lock') : ''}${icon('chevronRight', 'chevron')}</span>
             </button>`
           )
           .join('')}</div>
@@ -186,19 +204,20 @@ function openPinSheet(guest) {
           ${'<span class="box"></span>'.repeat(4)}
           <input id="pin-input" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" autocorrect="off" spellcheck="false" aria-label="PIN de 4 dígitos" data-autofocus>
         </div>
-        <p class="pin-msg" id="pin-msg"></p>`;
+        <p class="pin-msg" id="pin-msg"></p>
+        <p class="pin-notme"><button class="text-btn" type="button" id="not-me">No soy ${esc(firstName(guest.name))}, elegir otro nombre</button></p>`;
       const input = $('#pin-input', panel);
       const boxes = $$('.box', panel);
       const wrap = $('#pin-boxes', panel);
       const msgEl = $('#pin-msg', panel);
 
       const texts = () => {
-        $('#pin-title', panel).textContent = mode === 'enter' ? `Hola, ${firstName(guest.name)}` : mode === 'create' ? `Hola, ${firstName(guest.name)}` : 'Confirma tu PIN';
+        $('#pin-title', panel).textContent = mode === 'enter' ? `Hola, ${firstName(guest.name)}` : mode === 'create' ? `¿Eres ${guest.name}?` : 'Confirma tu PIN';
         $('#pin-sub', panel).textContent =
           mode === 'enter'
-            ? 'Ingresa tu PIN de 4 dígitos.'
+            ? 'Escribe el PIN de 4 dígitos que creaste.'
             : mode === 'create'
-            ? 'Crea un PIN de 4 dígitos. Lo usarás para volver a entrar y ver tu papelito.'
+            ? 'Si sí eres, crea un PIN de 4 dígitos. Lo usarás para volver a entrar y ver tu papelito.'
             : 'Escríbelo otra vez para asegurarnos de que lo recuerdas.';
       };
       const paint = () => {
@@ -267,6 +286,7 @@ function openPinSheet(guest) {
       input.addEventListener('focus', paint);
       input.addEventListener('blur', paint);
       $('[data-close]', panel).addEventListener('click', () => close(false));
+      $('#not-me', panel).addEventListener('click', () => close(false));
       texts();
       paint();
     },
@@ -294,7 +314,7 @@ async function renderHome() {
   if (phase === 'setup') {
     setView(
       'home',
-      `<div class="large-title"><h1>Hola, ${esc(firstName(me.name))}</h1><p>${esc(state.eventName)}</p></div>
+      `${hero({ eyebrow: state.eventName, title: `Hola, ${firstName(me.name)}` })}
        <div class="hero-card"><div class="glyph gray">${icon('hourglass')}</div><h2>Todavía no empezamos</h2>
        <p>El organizador está terminando la lista de invitados. Esta página se actualizará sola cuando todo esté listo.</p></div>`
     );
@@ -304,122 +324,108 @@ async function renderHome() {
 
   // phase: open (quinielas abiertas) | drawing (sorteo iniciado)
   const quinielasOpen = phase === 'open';
-  const min = state.minQuinielas;
-  const missing = Math.max(0, min - me.quinielas);
-  const stepQDone = me.quinielas > 0 && missing === 0;
   const canDraw = phase === 'drawing' && !me.hasDrawn;
-  const cost = state.quinielaCostCents || 0;
-  const costNotice =
-    quinielasOpen && cost > 0
-      ? `<section class="section"><div class="group"><div class="cell has-icon"><span class="icon-tile green">${icon('cash')}</span>
-          <span class="cell-body"><span class="cell-title">Cada quiniela cuesta ${money(cost)}</span><span class="cell-sub">Se paga el día de la cena.</span></span></div></div></section>`
+
+  const qRows = mine
+    .map(
+      (q) => `<button class="cell has-icon" type="button" data-quiniela="${q.id}">
+        <span class="icon-tile indigo">${icon('list')}</span>
+        <span class="cell-body"><span class="cell-title">${esc(q.name)}</span><span class="cell-sub">${plural(q.predictions.length, 'predicción', 'predicciones')}${
+          q.cost_cents ? ` · ${money(q.cost_cents)}` : ''
+        } · ${esc(relTime(q.created_at))}</span></span>
+        <span class="cell-trailing">${quinielasOpen ? '<span class="edit-hint">Ver o editar</span>' : icon('lock')}${icon('chevronRight', 'chevron')}</span>
+      </button>`
+    )
+    .join('');
+
+  let main = '';
+  if (quinielasOpen) {
+    // Prioridad: llenar la quiniela.
+    const first = me.quinielas === 0;
+    main = `<section class="section"><div class="fill-card">
+        <h2>${first ? 'Llena tu quiniela' : `Llevas ${plural(me.quinielas, 'quiniela', 'quinielas')}`}</h2>
+        ${
+          first
+            ? `<ol class="mini-steps">
+                <li><span class="n">1</span><span>Toca <b>Nueva quiniela</b>.</span></li>
+                <li><span class="n">2</span><span>Junto a cada persona, elige a quién crees que le va a regalar.</span></li>
+                <li><span class="n">3</span><span>Guárdala. Gana la que tenga más aciertos.</span></li>
+              </ol>`
+            : '<p>Puedes hacer más o editar las que ya tienes hasta que inicie el sorteo.</p>'
+        }
+        <button class="btn gold block" type="button" id="new-q">${icon('plus')} Nueva quiniela</button>
+      </div></section>
+      ${
+        mine.length
+          ? `<section class="section"><div class="section-header big"><h2>Mis quinielas</h2></div><div class="group">${qRows}</div>
+              <p class="section-footer">Toca una quiniela para verla, editarla o eliminarla.</p></section>`
+          : ''
+      }`;
+  } else {
+    // Prioridad: a quién le regalas.
+    const papel = me.hasDrawn
+      ? myReceiver
+        ? `<section class="section"><div class="section-header big"><h2>Tu papelito</h2></div>${slipHTML(myReceiver, slipFlipped)}</section>`
+        : ''
+      : `<section class="section"><div class="hero-card">
+          <div class="glyph">${icon('gift')}</div>
+          <h2>¡El sorteo empezó!</h2>
+          <p>Toca el botón para descubrir a quién le vas a regalar. Guárdalo en secreto hasta el intercambio.</p>
+          <button class="btn gold" type="button" id="draw">Sacar papelito</button>
+        </div></section>`;
+    const misQ = mine.length
+      ? `<section class="section"><details class="disclosure">
+          <summary><span>Ver mis quinielas</span><span class="muted">${mine.length} ${icon('lock')}${icon('chevronRight', 'disc-chev')}</span></summary>
+          <div class="group">${qRows}</div>
+          <p class="section-footer">Ya no se pueden modificar: se cerraron cuando inició el sorteo.</p>
+        </details></section>`
       : '';
+    main = papel + misQ;
+  }
 
-  const qSub = !quinielasOpen
-    ? me.quinielas
-      ? `${plural(me.quinielas, 'quiniela enviada', 'quinielas enviadas')}`
-      : 'No enviaste quinielas'
-    : stepQDone
-    ? 'Listo. Puedes hacer más si quieres.'
-    : min > 1
-    ? `Te ${missing === 1 ? 'falta' : 'faltan'} ${plural(missing, 'quiniela', 'quinielas')}`
-    : 'Adivina quién le regala a quién';
-
-  const steps = me.hasDrawn
-    ? ''
-    : `<section class="section">
-        <div class="section-header"><h2>Tus pasos</h2></div>
-        <div class="group">
-          <div class="cell has-icon">${
-            me.quinielas > 0 && (stepQDone || !quinielasOpen)
-              ? `<span class="step-dot done">${icon('check')}</span>`
-              : quinielasOpen
-              ? '<span class="step-dot current">1</span>'
-              : '<span class="step-dot">–</span>'
-          }
-            <span class="cell-body"><span class="cell-title">Llena tu quiniela</span><span class="cell-sub">${qSub}</span></span></div>
-          <div class="cell has-icon"><span class="step-dot ${canDraw ? 'current' : ''}">2</span>
-            <span class="cell-body"><span class="cell-title">Saca tu papelito</span><span class="cell-sub">${canDraw ? 'Disponible' : 'Cuando el organizador inicie el sorteo'}</span></span></div>
-        </div>
-      </section>`;
-
-  const slip = me.hasDrawn && myReceiver ? `<section class="section"><div class="section-header big"><h2>Tu papelito</h2></div>${slipHTML(myReceiver, slipFlipped)}</section>` : '';
-
-  const quinielas = `<section class="section">
-      <div class="section-header ${quinielasOpen ? 'big' : ''}"><h2>Mis quinielas</h2>${mine.length ? `<span>${mine.length}</span>` : ''}</div>
-      <div class="group">
-        ${mine
-          .map(
-            (q) => `<button class="cell has-icon" type="button" data-quiniela="${q.id}">
-              <span class="icon-tile indigo">${icon('list')}</span>
-              <span class="cell-body"><span class="cell-title">${esc(q.name)}</span><span class="cell-sub">${plural(q.predictions.length, 'predicción', 'predicciones')}${q.cost_cents ? ` · ${money(q.cost_cents)}` : ''} · ${esc(relTime(q.created_at))}</span></span>
-              <span class="cell-trailing">${quinielasOpen ? '' : icon('lock')}${icon('chevronRight', 'chevron')}</span>
-            </button>`
-          )
-          .join('')}
-        ${
-          me.owedCents > 0
-            ? `<div class="cell has-icon"><span class="icon-tile green">${icon('cash')}</span>
-                <span class="cell-body"><span class="cell-title">Total a pagar en la cena</span><span class="cell-sub">${plural(me.quinielas, 'quiniela', 'quinielas')}</span></span>
-                <span class="cell-trailing"><span class="score" style="font-size:17px">${money(me.owedCents)}</span></span></div>`
-            : ''
-        }
-        ${
-          quinielasOpen
-            ? `<button class="cell has-icon accent" type="button" id="new-q"><span class="icon-tile red">${icon('plus')}</span><span class="cell-body"><span class="cell-title">Nueva quiniela</span></span></button>`
-            : mine.length
-            ? ''
-            : `<div class="cell"><span class="cell-body muted">No hiciste quinielas.</span></div>`
-        }
-      </div>
-      <p class="section-footer">${
-        quinielasOpen
-          ? `Adivina a quién le regalará cada persona. Puedes hacer todas las que quieras hasta que el organizador inicie el sorteo; gana la que tenga más aciertos.${
-              cost ? ` Cada quiniela cuesta ${money(cost)} y se paga el día de la cena.` : ''
-            }`
-          : `Las quinielas se cerraron cuando inició el sorteo. Se calificarán cuando el organizador revele los resultados.${
-              me.owedCents > 0 ? ` Recuerda llevar ${money(me.owedCents)} a la cena.` : ''
-            }`
-      }</p>
-    </section>`;
-
-  const draw = me.hasDrawn
-    ? ''
-    : canDraw
-    ? `<section class="section"><div class="hero-card">
-        <div class="glyph">${icon('gift')}</div>
-        <h2>¡El sorteo empezó!</h2>
-        <p>Descubre a quién le vas a regalar. Guárdalo en secreto hasta el intercambio.</p>
-        <button class="btn" type="button" id="draw">Sacar papelito</button>
-      </div></section>`
-    : `<section class="section"><div class="hero-card">
-        <div class="glyph gray">${icon('lock')}</div>
-        <h2>El sorteo aún no empieza</h2>
-        <p>Los papelitos se generarán al azar cuando el organizador inicie el sorteo. Así nadie puede saber el resultado mientras se llenan las quinielas.</p>
-        <p class="footnote" style="margin:0">Esta página se actualizará sola.</p>
-      </div></section>`;
-
-  const body = me.hasDrawn ? slip + quinielas : canDraw ? draw + steps + quinielas : costNotice + steps + quinielas + draw;
   setView(
     'home',
-    `<div class="large-title"><h1>Hola, ${esc(firstName(me.name))}</h1><p>${esc(state.eventName)}</p></div>
-     ${body}
-     <section class="section"><div class="section-header"><h2>Cómo vamos</h2></div><div id="progress">${progressHTML()}</div></section>`
+    `${hero({ eyebrow: state.eventName, title: `Hola, ${firstName(me.name)}` })}
+     ${main}
+     <section class="section info-section"><div class="section-header"><h2>Información</h2></div><div id="info">${infoHTML()}</div></section>`
   );
 }
 
-function progressHTML() {
-  const { stats, phase } = state;
-  const quinielasPhase = phase === 'open';
-  const value = quinielasPhase ? stats.withQuiniela : stats.drawn;
-  const pct = stats.guests ? Math.round((value / stats.guests) * 100) : 0;
-  return `<div class="progress-card">
-      <div class="progress-top"><span class="progress-num">${value} <small>de ${stats.guests}</small></span><span class="muted" style="font-size:15px">${
-        quinielasPhase ? 'ya llenaron su quiniela' : 'ya sacaron papelito'
-      }</span></div>
-      <div class="bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}"><i style="width:${pct}%"></i></div>
-      <div class="meta-row"><span><b>${stats.quinielas}</b> ${stats.quinielas === 1 ? 'quiniela' : 'quinielas'} en juego</span><span><b>${stats.guests}</b> invitados</span></div>
-    </div>`;
+/** Información secundaria: premio, lo que debo, avance. Se actualiza sola con el sondeo. */
+function infoHTML() {
+  const { stats, phase, me } = state;
+  const cost = state.quinielaCostCents || 0;
+  const contact = (state.paymentContact || '').trim();
+  const open = phase === 'open';
+  const done = open ? stats.withQuiniela : stats.drawn;
+  const rows = [];
+  if (cost > 0 || stats.potCents > 0) {
+    rows.push(`<div class="cell has-icon"><span class="icon-tile red">${icon('trophy')}</span>
+      <span class="cell-body"><span class="cell-title">Premio acumulado</span><span class="cell-sub">${plural(stats.quinielas, 'quiniela', 'quinielas')} en juego</span></span>
+      <span class="cell-trailing"><span class="score gold-num">${money(stats.potCents || 0)}</span></span></div>`);
+    rows.push(`<div class="cell has-icon"><span class="icon-tile green">${icon('cash')}</span>
+      <span class="cell-body"><span class="cell-title">Tu total a pagar</span><span class="cell-sub">${
+        me.quinielas ? `${plural(me.quinielas, 'quiniela', 'quinielas')}` : 'Aún no tienes quinielas'
+      }${cost ? ` · ${money(cost)} c/u` : ''}</span></span>
+      <span class="cell-trailing"><span class="score">${money(me.owedCents || 0)}</span></span></div>`);
+  }
+  rows.push(`<div class="cell has-icon"><span class="icon-tile gray">${icon('people')}</span>
+      <span class="cell-body"><span class="cell-title">${done} de ${stats.guests}</span><span class="cell-sub">${
+        open ? 'ya llenaron su quiniela' : 'ya sacaron su papelito'
+      }</span></span></div>`);
+  if (open) {
+    rows.push(`<div class="cell has-icon"><span class="icon-tile navy">${icon('gift')}</span>
+      <span class="cell-body"><span class="cell-title">Sorteo</span><span class="cell-sub">Aún no inicia. Cuando empiece, aquí podrás sacar tu papelito.</span></span></div>`);
+  }
+  const foot =
+    cost > 0
+      ? open
+        ? `Las quinielas se pagan antes de que inicie el sorteo: el día de la cena${contact ? `, o antes con ${esc(contact)}` : ''}.`
+        : me.owedCents > 0
+        ? `Si aún no pagas tus quinielas, hazlo${contact ? ` con ${esc(contact)}` : ''} cuanto antes.`
+        : ''
+      : '';
+  return `<div class="group">${rows.join('')}</div>${foot ? `<p class="section-footer">${foot}</p>` : ''}`;
 }
 
 function slipHTML(r, flipped) {
@@ -474,21 +480,25 @@ async function renderResults() {
     .join('');
   const pairs = r.pairs
     .map(
-      (p) => `<div class="cell has-avatar">${avatar(p.giver)}
-        <span class="cell-body"><span class="cell-title">${esc(p.giver)}</span><span class="cell-sub">${esc(p.giverFamily)}</span></span>
-        <span class="cell-trailing"><span class="pairs-arrow">${icon('arrowRight')}</span><span style="color:var(--label);font-weight:500">${esc(p.receiver)}</span></span>
-      </div>`
+      (p) => pairRow(p.giver, p.receiver)
     )
     .join('');
   setView(
     'home',
-    `<div class="large-title"><h1>Resultados</h1><p>${esc(state.eventName)}</p></div>
+    `${hero({ eyebrow: state.eventName, title: 'Resultados', sub: '¡Llegó la noche! Así quedó el intercambio.' })}
      ${mineDrawn}
-     <section class="section"><div class="section-header big"><h2>Ranking de quinielas</h2>${r.potCents ? `<span>Bolsa: <b style="color:var(--label)">${money(r.potCents)}</b></span>` : ''}</div>
+     <section class="section"><div class="section-header big"><h2>Ranking de quinielas</h2>${r.potCents ? `<span>Premio: <b style="color:var(--gold)">${money(r.potCents)}</b></span>` : ''}</div>
        <div class="group">${board || '<div class="cell"><span class="cell-body muted">Nadie hizo quinielas.</span></div>'}</div>
-       <p class="section-footer">Un acierto por cada persona cuyo destinatario adivinaste.${me.owedCents > 0 ? ` Tus quinielas suman ${money(me.owedCents)} a pagar en la cena.` : ''}</p></section>
+       <p class="section-footer">Un acierto por cada persona cuyo destinatario adivinaste.${me.owedCents > 0 ? ` Tus quinielas suman ${money(me.owedCents)}.` : ''}</p></section>
      <section class="section"><div class="section-header big"><h2>Quién le regaló a quién</h2></div><div class="group">${pairs}</div></section>`
   );
+  // Confeti la primera vez que este teléfono ve los resultados.
+  let seen = false;
+  try {
+    seen = localStorage.getItem('ny_results_seen') === '1';
+    localStorage.setItem('ny_results_seen', '1');
+  } catch {}
+  if (!seen) setTimeout(() => confetti({ count: 180, duration: 3200 }), 300);
 }
 
 // Delegación de eventos del panel
@@ -541,12 +551,22 @@ function openQuinielaSheet(q) {
         <div class="section"><div class="section-header"><h2>${plural(q.predictions.length, 'predicción', 'predicciones')}${q.cost_cents ? ` · ${money(q.cost_cents)}` : ''} · ${esc(relTime(q.created_at))}</h2></div>
           <div class="group">${q.predictions
             .map(
-              (p) => `<div class="cell"><span class="cell-body"><span class="cell-title">${esc(nameOf.get(p.giver_id) || '—')}</span></span>
-              <span class="cell-trailing"><span class="pairs-arrow">${icon('arrowRight')}</span><span style="color:var(--label)">${esc(nameOf.get(p.receiver_id) || '—')}</span></span></div>`
+              (p) => pairRow(nameOf.get(p.giver_id) || '—', nameOf.get(p.receiver_id) || '—')
             )
             .join('')}</div></div>
-        ${canDelete ? `<div class="section"><div class="group"><button class="cell destructive" type="button" id="del-q">Eliminar quiniela</button></div></div>` : ''}`;
+        ${
+          canDelete
+            ? `<button class="btn block" type="button" id="edit-q" style="margin-top:20px">${icon('list')} Editar quiniela</button>
+               <div class="section" style="margin-top:16px"><div class="group"><button class="cell destructive" type="button" id="del-q">Eliminar quiniela</button></div>
+               <p class="section-footer">Puedes editarla o eliminarla hasta que inicie el sorteo.</p></div>`
+            : `<p class="section-footer" style="margin-top:12px">${icon('lock', '')
+                .replace('class="i "', 'class="i" style="display:inline-block;vertical-align:-2px;margin-right:4px"')}Ya no se puede modificar: las quinielas se cerraron al iniciar el sorteo.</p>`
+        }`;
       $('[data-close]', panel).addEventListener('click', () => close());
+      $('#edit-q', panel)?.addEventListener('click', () => {
+        close();
+        setTimeout(() => openEditor(q), 50);
+      });
       $('#del-q', panel)?.addEventListener('click', async () => {
         const ok = await confirm(
           '¿Eliminar esta quiniela?',
@@ -592,6 +612,7 @@ function revealSheet(receiver) {
       $('[data-close]', panel).addEventListener('click', () => close());
       setTimeout(() => {
         if (!s.classList.contains('flipped')) flipSlip(s);
+        setTimeout(() => confetti(), 350);
         if (navigator.vibrate) navigator.vibrate([20, 40, 20]);
       }, ui.reducedMotion() ? 50 : 900);
     },
@@ -602,17 +623,20 @@ function revealSheet(receiver) {
 // ===========================================================================
 // 3. Editor de quiniela
 // ===========================================================================
-function openEditor() {
+function openEditor(q = null) {
   if (state.phase !== 'open') return;
-  editor = { dirty: false, leaving: false };
-  history.pushState({ editor: true }, '', '#nueva-quiniela');
+  editor = { dirty: false, leaving: false, edit: q, initial: '' };
+  history.pushState({ editor: true }, '', q ? '#editar-quiniela' : '#nueva-quiniela');
   renderEditor();
 }
 
+const editorSnapshot = () => JSON.stringify([$('#ed-name')?.value.trim() || '', editorSelects().map((s) => s.value)]);
+
 function renderEditor() {
   const { guests, me, avoidSameFamily } = state;
+  const edit = editor?.edit;
   setNav({
-    title: 'Nueva quiniela',
+    title: edit ? 'Editar quiniela' : 'Nueva quiniela',
     leading: `<button class="text-btn" type="button" id="ed-cancel">Cancelar</button>`,
     trailing: `<button class="text-btn strong" type="button" id="ed-save-top" disabled>Guardar</button>`,
   });
@@ -632,11 +656,18 @@ function renderEditor() {
 
   setView(
     'editor',
-    `<div class="large-title" style="padding-bottom:16px"><h1>Nueva quiniela</h1><p>¿A quién crees que le va a regalar cada persona?</p></div>
+    `<div class="large-title" style="padding-bottom:16px"><h1>${edit ? 'Editar quiniela' : 'Nueva quiniela'}</h1><p>Junto a cada persona (la que <b>da</b> el regalo), elige a quién crees que le va a regalar (la que lo <b>recibe</b>).</p></div>
      <div class="group">
        <label class="cell"><span class="cell-title">Nombre</span><input class="field-inline" id="ed-name" maxlength="60" placeholder="Quiniela de ${esc(firstName(me.name))}" autocomplete="off"></label>
-       <div class="cell" id="ed-cost-row" ${state.quinielaCostCents ? '' : 'hidden'}><span class="cell-body"><span class="cell-title">Costo</span><span class="cell-sub">Se paga el día de la cena</span></span>
-         <span class="cell-trailing"><span class="score" id="ed-cost" style="font-size:17px">${money(state.quinielaCostCents)}</span></span></div>
+       ${
+         edit
+           ? edit.cost_cents
+             ? `<div class="cell"><span class="cell-body"><span class="cell-title">Costo</span><span class="cell-sub">Ya está en tu total; editar no cobra de nuevo</span></span>
+                <span class="cell-trailing"><span class="score" style="font-size:17px">${money(edit.cost_cents)}</span></span></div>`
+             : ''
+           : `<div class="cell" id="ed-cost-row" ${state.quinielaCostCents ? '' : 'hidden'}><span class="cell-body"><span class="cell-title">Costo</span><span class="cell-sub">Se paga antes del sorteo</span></span>
+         <span class="cell-trailing"><span class="score" id="ed-cost" style="font-size:17px">${money(state.quinielaCostCents)}</span></span></div>`
+       }
      </div>
      <div class="toolbar">
        <button class="btn small tinted" type="button" id="ed-random">${icon('dice')} Al azar</button>
@@ -646,11 +677,11 @@ function renderEditor() {
      <div class="bar" style="margin-top:12px"><i id="ed-bar" style="width:0"></i></div>
      ${[...families.values()]
        .map(
-         (f) => `<section class="section"><div class="section-header"><h2>${esc(f.name)}</h2></div><div class="group">${f.members
+         (f) => `<section class="section"><div class="section-header ed-cols"><h2>${esc(f.name)} · da</h2><span>recibe ${icon('gift')}</span></div><div class="group">${f.members
            .map(
              (g) => `<div class="cell has-avatar">${avatar(g.name)}
-               <span class="cell-body"><span class="cell-title">${esc(g.name)}</span>${g.id === me.id ? '<span class="cell-sub"><span class="you">Tú</span></span>' : ''}</span>
-               <span class="picker"><select data-giver="${g.id}" aria-label="A quién le regala ${esc(g.name)}"><option value="">Elegir</option>${optionsFor(g)}</select></span>
+               <span class="cell-body"><span class="cell-title">${esc(g.name)}${g.id === me.id ? ' <span class="you">(Tú)</span>' : ''}</span><span class="cell-sub">le regala a →</span></span>
+               <span class="picker"><select data-giver="${g.id}" aria-label="A quién le regala ${esc(g.name)}"><option value="">¿A quién?</option>${optionsFor(g)}</select></span>
              </div>`
            )
            .join('')}</div></section>`
@@ -659,11 +690,21 @@ function renderEditor() {
      <p class="section-footer">Cada persona recibe exactamente un regalo${avoidSameFamily ? ' y nadie le regala a alguien de su propia familia' : ''}. Las opciones ya asignadas aparecen deshabilitadas.</p>
      <div class="mt-28"><button class="btn block" type="button" id="ed-save" disabled>${saveLabel()}</button></div>`
   );
+  if (edit) {
+    $('#ed-name').value = edit.name;
+    const byGiver = new Map(edit.predictions.map((p) => [p.giver_id, p.receiver_id]));
+    for (const sel of editorSelects()) {
+      const r = byGiver.get(Number(sel.dataset.giver));
+      if (r && [...sel.options].some((o) => o.value === String(r))) sel.value = String(r);
+    }
+  }
   window.scrollTo(0, 0);
+  editor.initial = editorSnapshot();
   syncEditor();
 }
 
 function saveLabel() {
+  if (editor?.edit) return 'Guardar cambios';
   return state.quinielaCostCents ? `Guardar quiniela · ${money(state.quinielaCostCents)}` : 'Guardar quiniela';
 }
 
@@ -700,7 +741,7 @@ function syncEditor() {
   $('#ed-save').disabled = !complete;
   const top = $('#ed-save-top');
   if (top) top.disabled = !complete;
-  editor.dirty = filled > 0 || !!$('#ed-name')?.value.trim();
+  editor.dirty = editor.edit ? editorSnapshot() !== editor.initial : filled > 0 || !!$('#ed-name')?.value.trim();
 }
 
 // Sorteo aleatorio válido (con backtracking) para "Al azar".
@@ -746,12 +787,31 @@ async function saveQuiniela(btn) {
   if (selects.some((s) => !s.value)) return toast('Completa todas las predicciones.', 'err');
   const predictions = selects.map((s) => ({ giver_id: Number(s.dataset.giver), receiver_id: Number(s.value) }));
   const name = $('#ed-name').value.trim();
+  if (editor.edit) {
+    const res = await busy(btn, () => act(() => api(`/api/quinielas/${editor.edit.id}`, { method: 'PUT', body: { name, predictions } })));
+    if (!res) {
+      const fresh = await api('/api/state').catch(() => null);
+      if (fresh && fresh.phase !== 'open') {
+        editor.dirty = false;
+        editor.leaving = true;
+        history.back();
+      }
+      return;
+    }
+    editor.dirty = false;
+    editor.leaving = true;
+    history.back();
+    toast('Cambios guardados');
+    return;
+  }
   const cost = state.quinielaCostCents || 0;
   if (cost > 0) {
     const total = (state.me.owedCents || 0) + cost;
     const ok = await confirm(
       `Esta quiniela cuesta ${money(cost)}`,
-      `Se paga el día de la cena. Con esta, llevarías ${money(total)} en total.`,
+      `Con esta, llevarías ${money(total)} en total. Se paga antes de que inicie el sorteo: el día de la cena${
+        (state.paymentContact || '').trim() ? ` o antes con ${state.paymentContact.trim()}` : ''
+      }.`,
       { confirmLabel: 'Guardar' }
     );
     if (!ok) return;
@@ -780,7 +840,9 @@ async function saveQuiniela(btn) {
 
 async function leaveEditor() {
   if (editor?.dirty) {
-    const ok = await confirm('¿Descartar esta quiniela?', 'Perderás lo que llevas.', { confirmLabel: 'Descartar', cancelLabel: 'Seguir editando', destructive: true });
+    const ok = editor.edit
+      ? await confirm('¿Descartar los cambios?', 'Tu quiniela se quedará como estaba.', { confirmLabel: 'Descartar', cancelLabel: 'Seguir editando', destructive: true })
+      : await confirm('¿Descartar esta quiniela?', 'Perderás lo que llevas.', { confirmLabel: 'Descartar', cancelLabel: 'Seguir editando', destructive: true });
     if (!ok) return;
   }
   editor.dirty = false;
@@ -820,7 +882,7 @@ window.addEventListener('popstate', async () => {
   if (view !== 'editor') return;
   if (editor?.dirty && !editor.leaving) {
     // Botón "atrás" del navegador con cambios: quedarse y preguntar.
-    history.pushState({ editor: true }, '', '#nueva-quiniela');
+    history.pushState({ editor: true }, '', editor.edit ? '#editar-quiniela' : '#nueva-quiniela');
     return leaveEditor();
   }
   editor = null;
@@ -854,12 +916,13 @@ async function poll() {
     next.eventName !== prev.eventName ||
     next.minQuinielas !== prev.minQuinielas ||
     next.quinielaCostCents !== prev.quinielaCostCents ||
+    next.paymentContact !== prev.paymentContact ||
     (next.me && prev.me && (next.me.hasDrawn !== prev.me.hasDrawn || next.me.quinielas !== prev.me.quinielas)) ||
     (!next.me && JSON.stringify(next.guests) !== JSON.stringify(prev.guests));
   if (changed) return load({ keepScroll: true });
   state = next;
-  const p = $('#progress');
-  if (p) p.innerHTML = progressHTML();
+  const info = $('#info');
+  if (info) info.innerHTML = infoHTML();
 }
 setInterval(poll, 15000);
 document.addEventListener('visibilitychange', () => {

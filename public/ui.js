@@ -437,6 +437,110 @@ const ui = (() => {
     }
   }
 
+  // ---------------------------------------------------------------- Año Nuevo
+  // Medianoche del próximo 1 de enero (hora del teléfono). Hasta el 15 de enero se sigue
+  // festejando el año que acaba de empezar.
+  function newYear(now = new Date()) {
+    const y = now.getMonth() === 0 && now.getDate() <= 15 ? now.getFullYear() : now.getFullYear() + 1;
+    return { year: y, at: new Date(y, 0, 1, 0, 0, 0) };
+  }
+  function countdownText(now = new Date()) {
+    const { year, at } = newYear(now);
+    const ms = at - now;
+    if (ms <= 0) return `¡Feliz <b>${year}</b>!`;
+    const min = Math.floor(ms / 60000);
+    const d = Math.floor(min / 1440);
+    const h = Math.floor((min % 1440) / 60);
+    const m = min % 60;
+    if (d >= 2) return `Faltan <b>${d} días</b> para el ${year}`;
+    if (d === 1) return `Falta <b>1 día${h ? ` y ${h} h` : ''}</b> para el ${year}`;
+    if (h >= 1) return `Faltan <b>${h} h ${m} min</b> para el ${year}`;
+    const s = Math.floor(ms / 1000) % 60;
+    return `Faltan <b>${m}:${String(s).padStart(2, '0')}</b> para el ${year}`;
+  }
+  let countdownTimer = null;
+  function tickCountdowns() {
+    const els = $$('[data-countdown]');
+    if (!els.length) return;
+    const html = countdownText();
+    for (const el of els) if (el.innerHTML !== html) el.innerHTML = html;
+  }
+  /** Portada de cielo nocturno con el año y la cuenta regresiva. */
+  function hero({ eyebrow = '', title = '', sub = '' } = {}) {
+    if (!countdownTimer) countdownTimer = setInterval(tickCountdowns, 1000);
+    return `<header class="ny-hero">
+        <span class="ny-stars" aria-hidden="true"></span>
+        <span class="ny-year" aria-hidden="true">${newYear().year}</span>
+        ${eyebrow ? `<p class="ny-eyebrow">${icon('sparkles')}${esc(eyebrow)}</p>` : ''}
+        <h1>${esc(title)}</h1>
+        ${sub ? `<p class="ny-sub">${esc(sub)}</p>` : ''}
+        <p class="ny-count">${icon('clock')}<span data-countdown>${countdownText()}</span></p>
+      </header>`;
+  }
+
+  /** Lluvia de confeti dorado. No hace nada si el usuario pidió menos movimiento. */
+  function confetti({ count = 140, duration = 2600 } = {}) {
+    if (reducedMotion()) return;
+    const canvas = document.createElement('canvas');
+    canvas.className = 'confetti';
+    canvas.setAttribute('aria-hidden', 'true');
+    document.body.appendChild(canvas);
+    const ctx = canvas.getContext('2d');
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const W = window.innerWidth;
+    const H = window.innerHeight;
+    canvas.width = W * dpr;
+    canvas.height = H * dpr;
+    ctx.scale(dpr, dpr);
+    const colors = ['#f6dd95', '#e2b453', '#c8962e', '#ffffff', '#fff4d6', '#3b4fb8', '#1d2a6b'];
+    const parts = Array.from({ length: count }, (_, i) => {
+      const fromLeft = i % 2 === 0;
+      const angle = (fromLeft ? -60 : -120) + (Math.random() - 0.5) * 50;
+      const speed = 9 + Math.random() * 9;
+      return {
+        x: fromLeft ? -10 : W + 10,
+        y: H * (0.55 + Math.random() * 0.25),
+        vx: Math.cos((angle * Math.PI) / 180) * speed,
+        vy: Math.sin((angle * Math.PI) / 180) * speed,
+        w: 6 + Math.random() * 6,
+        h: 3 + Math.random() * 4,
+        r: Math.random() * Math.PI,
+        vr: (Math.random() - 0.5) * 0.35,
+        c: colors[(Math.random() * colors.length) | 0],
+        round: Math.random() < 0.25,
+      };
+    });
+    const start = performance.now();
+    function frame(t) {
+      const k = (t - start) / duration;
+      ctx.clearRect(0, 0, W, H);
+      ctx.globalAlpha = k > 0.75 ? Math.max(0, (1 - k) / 0.25) : 1;
+      for (const p of parts) {
+        p.vy += 0.32;
+        p.vx *= 0.985;
+        p.vy *= 0.985;
+        p.x += p.vx;
+        p.y += p.vy;
+        p.r += p.vr;
+        ctx.save();
+        ctx.translate(p.x, p.y);
+        ctx.rotate(p.r);
+        ctx.fillStyle = p.c;
+        if (p.round) {
+          ctx.beginPath();
+          ctx.arc(0, 0, p.h / 1.4, 0, Math.PI * 2);
+          ctx.fill();
+        } else {
+          ctx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h * Math.abs(Math.cos(p.r * 2)) + 1);
+        }
+        ctx.restore();
+      }
+      if (k < 1) requestAnimationFrame(frame);
+      else canvas.remove();
+    }
+    requestAnimationFrame(frame);
+  }
+
   // ---------------------------------------------------------------- Barra que se vuelve translúcida
   function watchNavbar(nav) {
     const update = () => nav.classList.toggle('scrolled', window.scrollY > 24);
@@ -445,5 +549,5 @@ const ui = (() => {
     return update;
   }
 
-  return { $, $$, esc, sleep, icon, sheetBar, avatar, relTime, plural, money, request, sheet, alert, confirm, toast, busy, watchNavbar, reducedMotion };
+  return { $, $$, esc, sleep, icon, sheetBar, avatar, relTime, plural, money, request, sheet, alert, confirm, toast, busy, watchNavbar, reducedMotion, hero, confetti };
 })();

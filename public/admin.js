@@ -133,6 +133,7 @@ function statusHTML() {
   const joined = guests.filter((g) => g.claimed_at).length;
   const totalQ = guests.reduce((s, g) => s + g.quinielas, 0);
   const potCents = guests.reduce((s, g) => s + (g.owed_cents || 0), 0);
+  const withQ = guests.filter((g) => g.quinielas > 0).length;
   const minReq = Math.max(1, minQuinielas);
   const ready = guests.filter((g) => g.quinielas >= minReq).length;
   const p = PHASE[phase] || PHASE.setup;
@@ -174,8 +175,19 @@ function statusHTML() {
              <div class="bar"><i style="width:${pct}%"></i></div>`
           : ''
       }
-      <div class="meta-row" style="flex-wrap:wrap"><span><b>${joined}</b> entraron</span><span><b>${totalQ}</b> ${totalQ === 1 ? 'quiniela' : 'quinielas'}</span><span><b>${guests.length}</b> invitados</span>${
-        potCents > 0 || state.quinielaCostCents > 0 ? `<span>Bolsa <b>${money(potCents)}</b></span>` : ''
+      ${
+        phase === 'setup'
+          ? ''
+          : `<div class="kpis">
+              <div class="kpi"><span class="kpi-num">${totalQ}</span><span class="kpi-label">${totalQ === 1 ? 'Quiniela llenada' : 'Quinielas llenadas'}</span></div>
+              <div class="kpi"><span class="kpi-num">${withQ}<small>/${guests.length}</small></span><span class="kpi-label">Personas jugando</span></div>
+              <div class="kpi gold"><span class="kpi-num">${money(potCents)}</span><span class="kpi-label">Acumulado${
+                state.quinielaCostCents ? ` · ${money(state.quinielaCostCents)} c/u` : ''
+              }</span></div>
+            </div>`
+      }
+      <div class="meta-row" style="flex-wrap:wrap"><span><b>${joined}</b> entraron</span><span><b>${guests.length}</b> invitados</span>${
+        !state.quinielaCostCents && phase !== 'revealed' && phase !== 'drawing' ? '<span>Sin costo por quiniela (ponlo en Ajustes)</span>' : ''
       }</div>
       <p style="font-size:15px;color:var(--label-2);margin:14px 0 16px">${esc(body)}</p>
       ${actions}
@@ -243,7 +255,7 @@ function openGuestSheet(g) {
         ['Entró', g.claimed_at ? esc(relTime(g.claimed_at)) : 'No'],
         ['Dispositivos con sesión', String(g.sessions)],
         ['Quinielas', String(g.quinielas)],
-        ...(g.owed_cents || state.quinielaCostCents ? [['A pagar en la cena', `<b style="color:var(--label)">${money(g.owed_cents || 0)}</b>`]] : []),
+        ...(g.owed_cents || state.quinielaCostCents ? [['A pagar', `<b style="color:var(--label)">${money(g.owed_cents || 0)}</b>`]] : []),
         ['Papelito', g.drawn_at ? `Sacado ${esc(relTime(g.drawn_at))}` : state.phase === 'drawing' || state.phase === 'revealed' ? 'Pendiente' : 'Aún no hay sorteo'],
       ];
       panel.innerHTML = `
@@ -290,11 +302,11 @@ function drawHTML() {
     .replace('class="i "', 'class="i" style="display:inline-block;vertical-align:-2px;margin-right:4px"')}Sólo tú ves esta pestaña. ${drawn} de ${guests.length} ya sacaron su papelito.</p>
     ${[...fams]
       .map(
-        ([fam, gs]) => `<section class="section"><div class="section-header"><h2>${esc(fam)}</h2></div><div class="group">${gs
+        ([fam, gs]) => `<section class="section"><div class="section-header ed-cols"><h2>${esc(fam)} · da</h2><span>recibe ${icon('gift')}</span></div><div class="group">${gs
           .map(
             (g) => `<div class="cell has-avatar">${avatar(g.name)}
               <span class="cell-body"><span class="cell-title">${esc(g.name)}</span><span class="cell-sub">${g.drawn_at ? `Lo sacó ${esc(relTime(g.drawn_at))}` : 'Aún no lo saca'}</span></span>
-              <span class="cell-trailing"><span class="pairs-arrow">${icon('arrowRight')}</span>
+              <span class="cell-trailing"><span class="pairs-arrow" style="color:var(--gold)">${icon('arrowRight')}</span>
                 <span style="text-align:right"><span style="display:block;color:var(--label);font-weight:600">${esc(g.receiver || '—')}</span><span style="display:block;font-size:13px">${esc(g.receiver_family || '')}</span></span></span>
             </div>`
           )
@@ -381,14 +393,16 @@ function renderSettings(body) {
         <div class="cell"><span class="cell-body"><span class="cell-title">Quinielas mínimas</span><span class="cell-sub">Recomendado por persona</span></span>
           <span class="stepper-value" id="s-min-val">${minQ}</span>
           <span class="stepper"><button type="button" id="s-min-dec" aria-label="Menos">−</button><button type="button" id="s-min-inc" aria-label="Más">+</button></span></div>
-        <label class="cell"><span class="cell-body"><span class="cell-title">Costo por quiniela</span><span class="cell-sub">Se paga el día de la cena</span></span>
+        <label class="cell"><span class="cell-body"><span class="cell-title">Costo por quiniela</span><span class="cell-sub">Se paga antes de iniciar el sorteo</span></span>
           <span class="money-input"><span aria-hidden="true">$</span><input class="field-inline" id="s-cost" inputmode="decimal" autocomplete="off" placeholder="0" value="${
             state.quinielaCostCents ? costText(state.quinielaCostCents) : ''
           }" aria-label="Costo por quiniela en pesos" ${costLocked ? 'disabled' : ''}></span></label>
+        <label class="cell"><span class="cell-body"><span class="cell-title">Para pagar antes</span><span class="cell-sub">A quién contactar</span></span>
+          <input class="field-inline" id="s-contact" maxlength="40" placeholder="Nombre" value="${esc(state.paymentContact || '')}" autocomplete="off"></label>
         <label class="cell"><span class="cell-body"><span class="cell-title">Evitar misma familia</span><span class="cell-sub">Nadie le regala a alguien de su familia</span></span>
           <span class="switch"><input type="checkbox" id="s-fam" ${state.avoidSameFamily ? 'checked' : ''} ${locked ? 'disabled' : ''}><span></span></span></label>
       </div>
-      <p class="section-footer">El costo se muestra a los invitados al llenar cada quiniela, con el aviso de que se paga el día de la cena. Déjalo en 0 si son gratis${
+      <p class="section-footer">El costo se muestra a los invitados al llenar cada quiniela, con el aviso de que se paga antes de iniciar el sorteo: el día de la cena o antes, con la persona de “Para pagar antes”. Déjalo en 0 si son gratis${
         costLocked ? '; ya no se puede cambiar porque las quinielas están cerradas' : '. Si lo cambias, las quinielas ya creadas conservan su costo original'
       }. Las quinielas mínimas sirven de referencia: verás quién no las ha llenado y se te avisará antes de iniciar el sorteo.${
         locked ? ' La regla de familias sólo puede cambiarse antes de abrir las quinielas.' : ''
@@ -420,6 +434,7 @@ function renderSettings(body) {
     $('#s-cost').style.color = cost === null ? '#e5243b' : '';
     settingsDirty =
       $('#s-name').value.trim() !== state.eventName ||
+      $('#s-contact').value.trim() !== (state.paymentContact || '') ||
       minQ !== state.minQuinielas ||
       $('#s-fam').checked !== state.avoidSameFamily ||
       (cost !== null && cost !== state.quinielaCostCents);
@@ -436,11 +451,12 @@ function renderSettings(body) {
   $('#s-min-dec').addEventListener('click', () => setMin(minQ - 1));
   $('#s-min-inc').addEventListener('click', () => setMin(minQ + 1));
   $('#s-name').addEventListener('input', mark);
+  $('#s-contact').addEventListener('input', mark);
   $('#s-cost').addEventListener('input', mark);
   $('#s-fam').addEventListener('change', mark);
   saveBtn.addEventListener('click', () =>
     busy(saveBtn, async () => {
-      const payload = { eventName: $('#s-name').value.trim(), minQuinielas: minQ };
+      const payload = { eventName: $('#s-name').value.trim(), minQuinielas: minQ, paymentContact: $('#s-contact').value.trim() };
       if (!locked) payload.avoidSameFamily = $('#s-fam').checked;
       const cost = parseCost($('#s-cost').value);
       if (!costLocked && cost !== null && cost !== state.quinielaCostCents) {
