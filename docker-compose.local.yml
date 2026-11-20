@@ -1,0 +1,8 @@
+# Solo para probar en tu Mac (no se usa en el VPS):
+#   docker network create bitbite-proxy   # una vez, si no existe
+#   docker compose -f docker-compose.yml -f docker-compose.local.yml up --build
+# y abre http://localhost:3000
+services:
+  intercambio:
+    ports:
+      - "127.0.0.1:3000:3000"

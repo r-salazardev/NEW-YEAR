@@ -1,0 +1,16 @@
+{
+  "name": "intercambio-familiar",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Intercambio familiar con quinielas y papelitos",
+  "main": "server.js",
+  "type": "commonjs",
+  "engines": { "node": ">=22.13" },
+  "scripts": {
+    "start": "node --no-warnings=ExperimentalWarning server.js",
+    "dev": "node --no-warnings=ExperimentalWarning --watch server.js"
+  },
+  "dependencies": {
+    "express": "^4.21.2"
+  }
+}

@@ -1,0 +1,38 @@
+# Intercambio familiar en el VPS de BitBite, aislado como proyecto Docker aparte.
+#
+# - Sin "ports": Docker se salta ufw, así que publicar el 3000 lo dejaría abierto a
+#   internet sin HTTPS. Caddy (el de BitBite) lo alcanza por la red bitbite-proxy.
+# - El servicio se llama "intercambio" (nunca "api" ni "db"): esos nombres ya existen
+#   en las redes de BitBite y Caddy confundiría el tráfico.
+# - Para correrlo en tu Mac sin Caddy: ver docker-compose.local.yml
+name: intercambio
+
+services:
+  intercambio:
+    build: .
+    image: intercambio:latest
+    restart: unless-stopped
+    init: true
+    environment:
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Define ADMIN_PASSWORD en .env}
+    volumes:
+      - ./data:/data              # aquí vive intercambio.db (respaldos: ver DESPLIEGUE.md)
+    mem_limit: 256m
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - proxy
+
+networks:
+  proxy:
+    name: bitbite-proxy
+    external: true                # la crea el docker-compose.yml de BitBite

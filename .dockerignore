@@ -1,0 +1,8 @@
+node_modules
+data
+respaldos
+.env
+.git
+.DS_Store
+*.md
+docker-compose*.yml

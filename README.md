@@ -1,0 +1,58 @@
+# 🎁 Intercambio Familiar
+
+Página para el intercambio de regalos de la familia. El evento avanza en 4 fases que controla el organizador:
+
+1. **Preparando:** el organizador carga la lista de invitados agrupados por familia.
+2. **Quinielas abiertas:** cada quien entra con su nombre y un PIN de 4 dígitos, y llena todas las quinielas que quiera (quién cree que le regalará a quién). **Todavía no existe ningún papelito**, así que nadie, ni el organizador, puede hacer trampa.
+3. **Sorteo en curso:** el organizador presiona **Iniciar sorteo**. En ese momento se cierran las quinielas y se generan los papelitos al azar. Cada invitado puede **sacar su papelito** y ver a quién le toca regalar.
+4. **Resultados revelados:** el día del intercambio se ve quién le regaló a quién y la tabla de aciertos de las quinielas.
+
+## Stack
+
+- Node.js 22 + Express, un solo proceso.
+- SQLite integrado de Node (`node:sqlite`), un archivo en `data/`. **No necesitas levantar otra base de datos.**
+- Frontend HTML/CSS/JS sin build, con un sistema visual inspirado en las guías de Apple: tipografía del sistema (SF en iPhone/Mac), listas agrupadas, hojas inferiores, alertas, PIN tipo iOS y modo oscuro automático.
+
+## Correr local
+
+```bash
+npm install
+ADMIN_PASSWORD=secreto npm start
+```
+
+- Invitados: http://localhost:3000
+- Organizador: http://localhost:3000/admin.html
+
+## Levantar en el VPS (Docker)
+
+Corre en el VPS de BitBite, detrás de su Caddy, como proyecto Docker aparte. El front (`public/`) y el API salen del mismo contenedor. Los pasos completos, cómo actualizar, respaldar y quitarlo en diciembre están en [DESPLIEGUE.md](DESPLIEGUE.md).
+
+Para probar con Docker en tu Mac:
+
+```bash
+docker network create bitbite-proxy   # una vez
+docker compose -f docker-compose.yml -f docker-compose.local.yml up --build
+```
+
+## Cómo funciona el sorteo
+
+- Al pulsar **Iniciar sorteo** se genera de una sola vez un sorteo válido: nadie se regala a sí mismo y, si la regla está activa, nadie le regala a alguien de su propia familia. Así nunca hay "callejones sin salida" cuando los últimos sacan papelito.
+- "Sacar papelito" revela la asignación de esa persona y lo registra (el panel muestra quién ya sacó, pero **no** a quién le tocó).
+- La primera vez cada invitado crea su PIN y lo confirma; después de 5 intentos fallidos se bloquea 10 minutos.
+- Si alguien olvida su PIN, el organizador lo restablece desde el panel (Participantes → nombre → Restablecer PIN).
+- Si alguien eligió un nombre que no era suyo, restablecer el PIN cierra esa sesión.
+- **Reiniciar sorteo** borra papelitos y quinielas (conserva lista y PINs) y regresa a "Preparando".
+- **Costo por quiniela** (Ajustes): los invitados ven el costo antes de guardar cada quiniela, con el aviso de que se paga el día de la cena, y su total a pagar. El panel muestra cuánto debe cada quien y la bolsa total. Cada quiniela guarda el costo vigente al crearla, así que cambiarlo sólo afecta las nuevas; se bloquea al iniciar el sorteo.
+- "Quinielas mínimas" es una referencia: el panel muestra quién no la ha llenado y avisa antes de iniciar el sorteo.
+
+> Nota: el panel nunca muestra los papelitos, pero quien tenga acceso al archivo SQLite podría consultarlos. No lo abras si también participas 😉
+
+## Formato de la lista
+
+```
+Familia García: Juan, María, Pedro
+Familia López: Ana, Luis
+# Familia Pérez
+Rosa
+Toño
+```
