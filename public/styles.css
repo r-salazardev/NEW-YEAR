@@ -119,7 +119,10 @@ body {
 h1, h2, h3, p { margin: 0; }
 button, input, select, textarea { font: inherit; color: inherit; letter-spacing: inherit; }
 button { cursor: pointer; }
-:focus-visible { outline: 3px solid color-mix(in srgb, var(--accent) 45%, transparent); outline-offset: 2px; border-radius: 6px; }
+/* El anillo de foco sigue la forma de cada elemento (no se le cambia el redondeo). */
+:focus-visible { outline: 3px solid color-mix(in srgb, var(--accent) 45%, transparent); outline-offset: 2px; }
+/* Dentro de listas agrupadas el anillo va por dentro: afuera lo recortaría el borde redondeado. */
+.group :focus-visible { outline-offset: -3px; }
 [hidden] { display: none !important; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 svg.i { width: 1em; height: 1em; flex: none; display: block; }
@@ -463,6 +466,12 @@ button.cell:disabled { cursor: default; background: transparent; }
 .btn.tinted:hover { background: color-mix(in srgb, var(--accent) 15%, transparent); }
 .btn.gray { background: var(--fill); color: var(--label); }
 .btn.gray:hover { background: var(--fill-pressed); }
+/* Deshabilitado gana sobre las variantes (tinted/gray/gold definen color y fondo después). */
+.btn.tinted:disabled:not([data-busy]), .btn.gray:disabled:not([data-busy]), .btn.gold:disabled:not([data-busy]) {
+  background: var(--fill);
+  color: var(--label-3);
+  box-shadow: none;
+}
 .btn.small { height: 34px; padding: 0 14px; font-size: 15px; border-radius: 980px; }
 .btn.medium { height: 44px; font-size: 16px; border-radius: 12px; }
 .btn .spinner { width: 18px; height: 18px; }
@@ -957,10 +966,25 @@ dialog.alert::backdrop { background: var(--backdrop); }
 .alert-body h3 { font-size: 17px; font-weight: 600; line-height: 1.3; }
 .alert-body p { font-size: 13px; line-height: 1.4; margin-top: 4px; letter-spacing: -0.008em; }
 .alert-body .field { margin-top: 12px; height: 36px; font-size: 15px; background: var(--surface); }
+.alert-body:focus { outline: none; }
 .alert-actions { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; box-shadow: 0 -0.5px 0 var(--separator); }
-.alert-actions button { height: 44px; border: 0; background: none; color: var(--accent); font-size: 17px; }
+.alert-actions button {
+  height: 44px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  color: var(--accent);
+  font-size: 17px;
+  transition: background-color 0.15s;
+}
+/* Las esquinas de abajo siguen la curva de la alerta (Safari no siempre recorta los hijos). */
+.alert-actions button:first-child { border-bottom-left-radius: 16px; }
+.alert-actions button:last-child { border-bottom-right-radius: 16px; }
 .alert-actions button + button { box-shadow: -0.5px 0 0 var(--separator); }
-.alert-actions button:hover { background: var(--fill-2); }
+.alert-actions button:hover, .alert-actions button:active { background: var(--fill-2); }
+/* Foco con teclado: resaltado dentro del botón, nunca un marco que se salga de la alerta. */
+.alert-actions button:focus-visible { outline: none; background: var(--fill); }
 .alert-actions button.primary { font-weight: 600; }
 .alert-actions button.destructive { color: #e5243b; }
 .alert-actions button:disabled { color: var(--label-3); cursor: default; background: none; }

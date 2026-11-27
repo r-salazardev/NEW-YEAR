@@ -348,7 +348,7 @@ const ui = (() => {
       const dlg = document.createElement('dialog');
       dlg.className = requireText ? 'alert has-input' : 'alert';
       dlg.setAttribute('role', 'alertdialog');
-      dlg.innerHTML = `<div class="alert-body"><h3>${esc(title)}</h3>${message ? `<p>${esc(message)}</p>` : ''}${
+      dlg.innerHTML = `<div class="alert-body" tabindex="-1"><h3>${esc(title)}</h3>${message ? `<p>${esc(message)}</p>` : ''}${
         requireText ? `<input class="field" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="${esc(requireText)}">` : ''
       }</div><div class="alert-actions">${actions
         .map((a, i) => `<button type="button" data-i="${i}" class="${a.role || ''}">${esc(a.label)}</button>`)
@@ -380,9 +380,20 @@ const ui = (() => {
         const c = actions.find((a) => a.role === 'cancel');
         finish(c ? c.value : undefined);
       });
+      // Enter confirma (como antes, cuando el foco iniciaba en el botón principal).
+      dlg.addEventListener('keydown', (e) => {
+        if (e.key !== 'Enter' || e.target.closest?.('button')) return;
+        const p = $('.alert-actions button.primary', dlg);
+        if (p && !p.disabled) {
+          e.preventDefault();
+          p.click();
+        }
+      });
       lockScroll();
       dlg.showModal();
-      (input || $('.alert-actions button.primary', dlg) || $('.alert-actions button', dlg))?.focus();
+      // El foco inicial va al mensaje, no a un botón: así Safari no pinta un anillo de foco
+      // alrededor de "Guardar" al abrir la alerta con un toque.
+      (input || $('.alert-body', dlg))?.focus({ preventScroll: true });
       requestAnimationFrame(() => dlg.classList.add('open'));
     });
   }
