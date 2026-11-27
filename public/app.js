@@ -139,6 +139,22 @@ function renderLogin() {
       renderNames();
       input.focus();
     });
+    // En el teléfono el teclado tapa la mitad de abajo: al buscar, sube "¿Quién eres tú?" hasta
+    // arriba para que los resultados queden a la vista sobre el teclado. Mientras se busca, la
+    // lista guarda espacio abajo para que siempre se pueda subir aunque haya pocos resultados.
+    input.addEventListener('focus', () => {
+      $('#names')?.classList.add('searching');
+      setTimeout(() => {
+        const head = $('.login-ask');
+        if (document.activeElement !== input || !head || view !== 'login') return;
+        const navH = $('#navbar')?.offsetHeight || 0;
+        const top = head.getBoundingClientRect().top + window.scrollY - navH - 4;
+        if (Math.abs(top - window.scrollY) > 4) window.scrollTo({ top, behavior: ui.reducedMotion() ? 'auto' : 'smooth' });
+      }, 320);
+    });
+    input.addEventListener('blur', () => {
+      if (!search) $('#names')?.classList.remove('searching');
+    });
   }
 }
 
@@ -920,6 +936,14 @@ async function poll() {
   }
   if (view === 'editor' || document.querySelector('dialog[open]')) return;
   const prev = state;
+  // En la pantalla de entrada, si sólo cambió la lista (p. ej. alguien más entró), repintar
+  // sólo los nombres: repintar todo le quitaría el foco al buscador y cerraría el teclado.
+  if (view === 'login' && !next.me && !prev.me && next.phase === prev.phase && next.eventName === prev.eventName) {
+    const guestsChanged = JSON.stringify(next.guests) !== JSON.stringify(prev.guests);
+    state = next;
+    if (guestsChanged) renderNames();
+    return;
+  }
   const changed =
     next.phase !== prev.phase ||
     !!next.me !== !!prev.me ||

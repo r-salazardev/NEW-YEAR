@@ -548,6 +548,12 @@ textarea.field { height: auto; min-height: 240px; padding: 12px 14px; line-heigh
 label.cell { cursor: text; }
 .search .i { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); color: var(--label-2); font-size: 16px; pointer-events: none; }
 .search .field { height: 38px; padding-left: 34px; font-size: 17px; }
+/* Sólo nuestra ✕ (el navegador agrega otra en campos de búsqueda). */
+.search .field::-webkit-search-cancel-button, .search .field::-webkit-search-decoration { -webkit-appearance: none; appearance: none; display: none; }
+/* Los campos de texto llevan el anillo pegado a su borde, no separado. */
+.field:focus-visible { outline-offset: 0; }
+/* Mientras se busca: espacio abajo para poder subir el buscador hasta arriba (ver renderLogin). */
+#names.searching { min-height: 100vh; }
 .search .clear { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); width: 30px; height: 30px; border: 0; background: none; color: var(--label-3); display: grid; place-items: center; font-size: 17px; }
 
 /* Selector estilo menú de iOS */
@@ -847,9 +853,10 @@ dialog.sheet::backdrop { background: transparent; }
 .sheet-panel {
   position: fixed;
   left: 50%;
-  bottom: 0;
+  /* --vv-*: parte visible de la pantalla (cambia con el teclado de iOS; ver ui.sheet) */
+  bottom: var(--vv-bottom, 0px);
   width: min(100%, 520px);
-  max-height: calc(100dvh - 12px - var(--safe-top));
+  max-height: calc(var(--vv-h, 100dvh) - 12px - var(--safe-top));
   overflow: auto;
   overscroll-behavior: contain;
   background: var(--sheet-bg);
@@ -864,14 +871,15 @@ dialog.sheet::backdrop { background: transparent; }
 /* Hoja alta (cuando hay teclado): anclada arriba como en iOS. El contenido queda
    en la parte superior y el teclado ocupa el espacio vacío de abajo, así nada se mueve. */
 dialog.sheet.large .sheet-panel {
-  top: calc(var(--safe-top) + 12px);
+  top: calc(var(--vv-top, 0px) + var(--safe-top) + 12px);
+  bottom: 0;
   max-height: none;
 }
 dialog.sheet.large .pin-head { padding-top: 20px; }
 /* Campo "señuelo" para abrir el teclado sin desplazar la página (ver ui.sheet). */
 .focus-proxy {
   position: fixed;
-  top: 0;
+  top: var(--vv-top, 0px);
   left: 0;
   width: 1px;
   height: 1px;

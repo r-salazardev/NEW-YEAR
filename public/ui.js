@@ -171,6 +171,24 @@ const ui = (() => {
       lockScroll();
       dlg.showModal();
 
+      // Con el teclado abierto (p. ej. venías del buscador), iOS desplaza la parte visible de la
+      // pantalla y los elementos fijos se quedan donde estaban: la hoja sale desfasada. La hoja
+      // sigue a la parte visible (visualViewport) mientras esté abierta.
+      const vv = window.visualViewport;
+      const syncViewport = () => {
+        if (!vv) return;
+        dlg.style.setProperty('--vv-top', `${Math.max(0, vv.offsetTop)}px`);
+        dlg.style.setProperty('--vv-h', `${vv.height}px`);
+        dlg.style.setProperty('--vv-bottom', `${Math.max(0, window.innerHeight - vv.offsetTop - vv.height)}px`);
+      };
+      syncViewport();
+      vv?.addEventListener('resize', syncViewport);
+      vv?.addEventListener('scroll', syncViewport);
+      dlg.addEventListener('close', () => {
+        vv?.removeEventListener('resize', syncViewport);
+        vv?.removeEventListener('scroll', syncViewport);
+      });
+
       const target = $('[data-autofocus]', dlg);
       if (target) {
         // iOS sólo abre el teclado si el foco ocurre durante el toque del usuario, pero si
