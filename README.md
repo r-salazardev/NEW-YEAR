@@ -36,16 +36,26 @@ docker compose -f docker-compose.yml -f docker-compose.local.yml up --build
 
 ## Cómo funciona el sorteo
 
-- Al pulsar **Iniciar sorteo** se genera de una sola vez un sorteo válido: nadie se regala a sí mismo y, si la regla está activa, nadie le regala a alguien de su propia familia. Así nunca hay "callejones sin salida" cuando los últimos sacan papelito.
-- "Sacar papelito" revela la asignación de esa persona y lo registra (el panel muestra quién ya sacó, pero **no** a quién le tocó).
-- La primera vez cada invitado crea su PIN y lo confirma; después de 5 intentos fallidos se bloquea 10 minutos.
+- Al pulsar **Iniciar sorteo** se genera de una sola vez un sorteo válido: cada quien da exactamente un regalo y recibe exactamente uno, nadie se regala a sí mismo y, si la regla está activa, nadie le regala a alguien de su propia familia. Así nunca hay "callejones sin salida" cuando los últimos sacan papelito.
+- El sorteo es **uniforme**: todas las combinaciones válidas tienen la misma probabilidad, con azar criptográfico (`crypto.getRandomValues`). El algoritmo vive en `public/draw.js` y es el mismo que usa el botón "Al azar" de las quinielas, que es independiente del sorteo real (éste ni siquiera existe mientras las quinielas están abiertas).
+- Antes de guardar, el servidor vuelve a verificar el sorteo; además la base de datos impide que alguien dé o reciba dos papelitos.
+- "Sacar papelito" revela la asignación de esa persona y lo registra. En Participantes, el organizador ve quién ya vio su papelito y quién falta (sin ver a quién le tocó).
+- La primera vez cada invitado crea su PIN y lo confirma; después de 5 intentos fallidos se bloquea 10 minutos, y cada bloqueo siguiente dura el doble. La contraseña del organizador también se bloquea tras 8 intentos fallidos.
 - Si alguien olvida su PIN, el organizador lo restablece desde el panel (Participantes → nombre → Restablecer PIN).
 - Si alguien eligió un nombre que no era suyo, restablecer el PIN cierra esa sesión.
 - **Reiniciar sorteo** borra papelitos y quinielas (conserva lista y PINs) y regresa a "Preparando".
 - **Costo por quiniela** (Ajustes): los invitados ven el costo antes de guardar cada quiniela, con el aviso de que se paga el día de la cena, y su total a pagar. El panel muestra cuánto debe cada quien y la bolsa total. Cada quiniela guarda el costo vigente al crearla, así que cambiarlo sólo afecta las nuevas; se bloquea al iniciar el sorteo.
 - "Quinielas mínimas" es una referencia: el panel muestra quién no la ha llenado y avisa antes de iniciar el sorteo.
 
-> Nota: el panel nunca muestra los papelitos, pero quien tenga acceso al archivo SQLite podría consultarlos. No lo abras si también participas 😉
+> Nota: la pestaña **Sorteo** del panel está bloqueada: para ver quién le regala a quién hay que escribir otra vez la contraseña del organizador (5 intentos fallidos la bloquean 15 min). Muestra además la verificación del sorteo (todos dan, todos reciben, sin repetidos). Se vuelve a bloquear al cambiar de pestaña o recargar. El archivo SQLite también guarda los papelitos: no lo abras si participas 😉
+
+## Pruebas
+
+```bash
+npm test
+```
+
+Verifican que el sorteo siempre sea válido, que sea uniforme (prueba chi-cuadrada contra todas las combinaciones posibles) y recorren el flujo completo contra el servidor: quinielas inválidas rechazadas, quinielas cerradas al iniciar el sorteo, papelitos, resultados y bloqueos de PIN/contraseña.
 
 ## Formato de la lista
 

@@ -71,7 +71,8 @@ async function load({ keepScroll = false } = {}) {
     if (keepScroll) window.scrollTo(0, y);
   } catch (err) {
     if (view === 'loading') {
-      setView('error', `<div class="empty">${icon('exclamation')}<h2>No se pudo cargar</h2><p>${esc(err.message)}</p><p style="margin-top:20px"><button class="btn medium" onclick="location.reload()">Reintentar</button></p></div>`);
+      setView('error', `<div class="empty">${icon('exclamation')}<h2>No se pudo cargar</h2><p>${esc(err.message)}</p><p style="margin-top:20px"><button class="btn medium" type="button" id="retry">Reintentar</button></p></div>`);
+      $('#retry')?.addEventListener('click', () => location.reload());
     } else {
       toast(err.message, 'err');
     }
@@ -744,42 +745,14 @@ function syncEditor() {
   editor.dirty = editor.edit ? editorSnapshot() !== editor.initial : filled > 0 || !!$('#ed-name')?.value.trim();
 }
 
-// Sorteo aleatorio válido (con backtracking) para "Al azar".
+// "Al azar": usa el mismo sorteo uniforme y criptográfico del servidor (draw.js). Es
+// independiente del sorteo real, que ni siquiera existe mientras las quinielas están abiertas.
 function randomAssignment() {
-  const guests = state.guests;
-  const avoid = state.avoidSameFamily;
-  const shuffle = (a) => {
-    const b = a.slice();
-    for (let i = b.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [b[i], b[j]] = [b[j], b[i]];
-    }
-    return b;
-  };
-  const ok = (g, r) => g.id !== r.id && (!avoid || g.family_id !== r.family_id);
-  const size = {};
-  for (const g of guests) size[g.family_id] = (size[g.family_id] || 0) + 1;
-  for (let attempt = 0; attempt < 20; attempt++) {
-    const givers = shuffle(guests).sort((a, b) => size[b.family_id] - size[a.family_id]);
-    const used = new Set();
-    const out = new Map();
-    let steps = 0;
-    const solve = (i) => {
-      if (++steps > 50000) return false;
-      if (i === givers.length) return true;
-      for (const r of shuffle(guests)) {
-        if (used.has(r.id) || !ok(givers[i], r)) continue;
-        used.add(r.id);
-        out.set(givers[i].id, r.id);
-        if (solve(i + 1)) return true;
-        used.delete(r.id);
-        out.delete(givers[i].id);
-      }
-      return false;
-    };
-    if (solve(0)) return out;
+  try {
+    return Sorteo.generate(state.guests, { avoidFamily: state.avoidSameFamily, timeLimitMs: 300 }).draw;
+  } catch {
+    return null;
   }
-  return null;
 }
 
 async function saveQuiniela(btn) {

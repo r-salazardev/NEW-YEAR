@@ -18,6 +18,10 @@ try {
 } catch {}
 let settingsDirty = false;
 let listDirty = false;
+// Pestaña Sorteo desbloqueada: { pairs: Map(giverId → { receiver, receiver_family }), check }.
+// Sólo vive en memoria; se vuelve a bloquear al cambiar de pestaña, recargar o salir.
+let drawData = null;
+const lockDraw = () => (drawData = null);
 
 const api = (url, opts = {}) => request('/api/admin' + url, { ...opts, headers: { 'x-admin-key': key } });
 
@@ -37,6 +41,7 @@ async function act(fn) {
 
 function logout() {
   key = '';
+  lockDraw();
   try {
     sessionStorage.removeItem('adminKey');
   } catch {}
@@ -93,13 +98,14 @@ const PHASE = {
 async function refresh({ quiet = false } = {}) {
   const next = await act(() => api('/state'));
   if (!next) return;
+  if (next.phase !== state?.phase) lockDraw(); // reinicio/nuevo sorteo: no mostrar datos viejos
   state = next;
   if (quiet) {
     // Actualización silenciosa: sólo repinta lo que no se está editando.
     const s = $('#status');
     if (s) s.innerHTML = statusHTML();
     if (tab === 'people') $('#tab-body').innerHTML = peopleHTML();
-    if (tab === 'draw') $('#tab-body').innerHTML = drawHTML();
+    if (tab === 'draw' && !$('#draw-pw')?.value && document.activeElement?.id !== 'draw-pw') $('#tab-body').innerHTML = drawHTML();
     return;
   }
   render();
@@ -154,7 +160,7 @@ function statusHTML() {
         : 'Comparte el enlace para que todos llenen su quiniela. Los papelitos no existen todavía: se generan al azar cuando inicies el sorteo, así nadie (ni tú) puede hacer trampa.';
     actions = `<button class="btn block" type="button" data-act="start-draw">Iniciar sorteo</button>`;
   } else if (phase === 'drawing') {
-    progress = [drawn, 'sacaron papelito'];
+    progress = [drawn, 'ya vieron su papelito'];
     body =
       drawn === guests.length
         ? 'Todos sacaron su papelito. Cuando hagan el intercambio, revela los resultados.'
@@ -214,12 +220,21 @@ function peopleHTML() {
     if (!fams.has(g.family)) fams.set(g.family, []);
     fams.get(g.family).push(g);
   }
-  return [...fams]
+  const drawPhase = phase === 'drawing' || phase === 'revealed';
+  return (drawPhase ? papelitosSummaryHTML() : '') + [...fams]
     .map(
       ([fam, gs]) => `<section class="section"><div class="section-header"><h2>${esc(fam)}</h2><span>${gs.length}</span></div><div class="group">${gs
         .map((g) => {
           const sub = [
-            g.claimed_at ? 'Entró' : 'No ha entrado',
+            drawPhase
+              ? g.drawn_at
+                ? `Vio su papelito ${relTime(g.drawn_at)}`
+                : g.claimed_at
+                ? 'Aún no ve su papelito'
+                : 'No ha entrado a la página'
+              : g.claimed_at
+              ? 'Entró'
+              : 'No ha entrado',
             g.quinielas ? plural(g.quinielas, 'quiniela', 'quinielas') : null,
             g.owed_cents ? `debe ${money(g.owed_cents)}` : null,
           ]
@@ -233,8 +248,8 @@ function peopleHTML() {
                 ? '<span class="badge green">Quiniela lista</span>'
                 : '<span class="badge orange">Sin quiniela</span>'
               : g.drawn_at
-              ? '<span class="badge green">Sacó papelito</span>'
-              : '<span class="badge orange">Pendiente</span>';
+              ? '<span class="badge green">Ya lo vio</span>'
+              : '<span class="badge orange">No lo ha visto</span>';
           return `<button class="cell has-avatar" type="button" data-guest="${g.id}">${avatar(g.name)}
             <span class="cell-body"><span class="cell-title">${esc(g.name)}</span><span class="cell-sub">${esc(sub)}</span></span>
             <span class="cell-trailing">${badge}${icon('chevronRight', 'chevron')}</span></button>`;
@@ -244,19 +259,53 @@ function peopleHTML() {
     .join('');
 }
 
+/** Quién ya vio su papelito (al menos una vez) y quién falta. No dice a quién le tocó. */
+function papelitosSummaryHTML() {
+  const { guests } = state;
+  const pending = guests.filter((g) => !g.drawn_at);
+  const seen = guests.length - pending.length;
+  const names = (list) => list.map((g) => esc(g.name)).join(', ');
+  const noLogin = pending.filter((g) => !g.claimed_at);
+  const cell = pending.length
+    ? `<div class="cell has-icon"><span class="icon-tile orange">${icon('hourglass')}</span>
+        <span class="cell-body"><span class="cell-title">${pending.length === 1 ? 'Falta 1 persona' : `Faltan ${pending.length} personas`} por ver su papelito</span>
+        <span class="cell-sub">${names(pending)}</span></span></div>${
+          noLogin.length
+            ? `<div class="cell has-icon"><span class="icon-tile gray">${icon('person')}</span>
+                <span class="cell-body"><span class="cell-title">${noLogin.length === 1 ? '1 no ha entrado' : `${noLogin.length} no han entrado`} a la página</span>
+                <span class="cell-sub">${names(noLogin)}. Mándales el enlace.</span></span></div>`
+            : ''
+        }`
+    : `<div class="cell has-icon"><span class="icon-tile green">${icon('check')}</span>
+        <span class="cell-body"><span class="cell-title">Todos ya vieron su papelito</span>
+        <span class="cell-sub">Las ${guests.length} personas ya saben a quién le regalan.</span></span></div>`;
+  return `<section class="section"><div class="section-header"><h2>Papelitos</h2><span>${seen} de ${guests.length} ya lo vieron</span></div>
+      <div class="group">${cell}</div>
+      <p class="section-footer">Sólo muestra quién ya vio su papelito, no a quién le tocó.</p></section>`;
+}
+
 function openGuestSheet(g) {
   sheet(
     (panel, close) => {
       const rows = [
         ...(state.phase === 'drawing' || state.phase === 'revealed'
-          ? [['Le regala a', g.receiver ? `<b style="color:var(--accent);font-weight:600">${esc(g.receiver)}</b>` : 'Sin asignar']]
+          ? [
+              [
+                'Le regala a',
+                drawData
+                  ? drawData.pairs.get(g.id)
+                    ? `<b style="color:var(--accent);font-weight:600">${esc(drawData.pairs.get(g.id).receiver)}</b>`
+                    : 'Sin asignar'
+                  : `<span class="muted">${icon('lock', '').replace('class="i "', 'class="i" style="display:inline-block;vertical-align:-2px;margin-right:4px"')}Bloqueado (pestaña Sorteo)</span>`,
+              ],
+            ]
           : []),
         ['Familia', esc(g.family)],
         ['Entró', g.claimed_at ? esc(relTime(g.claimed_at)) : 'No'],
         ['Dispositivos con sesión', String(g.sessions)],
         ['Quinielas', String(g.quinielas)],
         ...(g.owed_cents || state.quinielaCostCents ? [['A pagar', `<b style="color:var(--label)">${money(g.owed_cents || 0)}</b>`]] : []),
-        ['Papelito', g.drawn_at ? `Sacado ${esc(relTime(g.drawn_at))}` : state.phase === 'drawing' || state.phase === 'revealed' ? 'Pendiente' : 'Aún no hay sorteo'],
+        ['Papelito', g.drawn_at ? `Lo vio ${esc(relTime(g.drawn_at))}` : state.phase === 'drawing' || state.phase === 'revealed' ? 'No lo ha visto' : 'Aún no hay sorteo'],
       ];
       panel.innerHTML = `
         ${ui.sheetBar()}
@@ -287,32 +336,77 @@ function openGuestSheet(g) {
 }
 
 // ---------------------------------------------------------------- Sorteo (quién le regala a quién)
+const inlineIcon = (name) => icon(name, '').replace('class="i "', 'class="i" style="display:inline-block;vertical-align:-2px;margin-right:4px"');
+
 function drawHTML() {
   const { guests, phase } = state;
   if (phase === 'setup' || phase === 'open') {
     return `<div class="empty">${icon('lock')}<h2>Aún no hay sorteo</h2><p>Los papelitos se generan al azar cuando presionas “Iniciar sorteo”. Hasta entonces nadie, ni tú, puede saber quién le regala a quién.</p></div>`;
   }
   const drawn = guests.filter((g) => g.drawn_at).length;
+  if (!drawData) {
+    return `<div class="empty" style="padding-bottom:8px">${icon('lock')}<h2>Sorteo bloqueado</h2><p>Para ver quién le regala a quién, escribe otra vez la contraseña del organizador. ${drawn} de ${guests.length} ya sacaron su papelito.</p></div>
+      <form id="draw-unlock" autocomplete="off">
+        <div class="group"><label class="cell"><span class="cell-title">Contraseña</span>
+          <input class="field-inline" id="draw-pw" type="password" autocomplete="current-password" required placeholder="Requerida"></label></div>
+        <p class="section-footer" id="draw-msg">Se vuelve a bloquear al cambiar de pestaña o recargar la página.</p>
+        <div class="mt-28"><button class="btn block" type="submit">${icon('eye')} Ver sorteo</button></div>
+      </form>`;
+  }
+  const { check } = drawData;
+  const ok = check.valid && check.givers === check.guests && check.receivers === check.guests;
+  const verify = `<div class="group"><div class="cell has-icon"><span class="icon-tile ${ok ? 'green' : 'red'}">${icon(ok ? 'check' : 'exclamation')}</span>
+      <span class="cell-body"><span class="cell-title">${ok ? 'Sorteo verificado' : 'El sorteo tiene un problema'}</span>
+      <span class="cell-sub">${check.givers} de ${check.guests} dan · ${check.receivers} de ${check.guests} reciben · ${
+        ok ? `sin repetidos${state.avoidSameFamily ? ' ni regalos en la misma familia' : ''}` : 'reinicia el sorteo'
+      }</span></span></div></div>`;
   const fams = new Map();
   for (const g of guests) {
     if (!fams.has(g.family)) fams.set(g.family, []);
     fams.get(g.family).push(g);
   }
-  return `<p class="section-footer" style="padding-top:0;margin-bottom:4px">${icon('eye', '')
-    .replace('class="i "', 'class="i" style="display:inline-block;vertical-align:-2px;margin-right:4px"')}Sólo tú ves esta pestaña. ${drawn} de ${guests.length} ya sacaron su papelito.</p>
+  return `<p class="section-footer" style="padding-top:0;margin-bottom:4px">${inlineIcon('eye')}Sólo tú ves esto. ${drawn} de ${guests.length} ya sacaron su papelito.</p>
+    ${verify}
     ${[...fams]
       .map(
         ([fam, gs]) => `<section class="section"><div class="section-header ed-cols"><h2>${esc(fam)} · da</h2><span>recibe ${icon('gift')}</span></div><div class="group">${gs
-          .map(
-            (g) => `<div class="cell has-avatar">${avatar(g.name)}
+          .map((g) => {
+            const p = drawData.pairs.get(g.id);
+            return `<div class="cell has-avatar">${avatar(g.name)}
               <span class="cell-body"><span class="cell-title">${esc(g.name)}</span><span class="cell-sub">${g.drawn_at ? `Lo sacó ${esc(relTime(g.drawn_at))}` : 'Aún no lo saca'}</span></span>
               <span class="cell-trailing"><span class="pairs-arrow" style="color:var(--gold)">${icon('arrowRight')}</span>
-                <span style="text-align:right"><span style="display:block;color:var(--label);font-weight:600">${esc(g.receiver || '—')}</span><span style="display:block;font-size:13px">${esc(g.receiver_family || '')}</span></span></span>
-            </div>`
-          )
+                <span style="text-align:right"><span style="display:block;color:var(--label);font-weight:600">${esc(p?.receiver || '—')}</span><span style="display:block;font-size:13px">${esc(p?.receiver_family || '')}</span></span></span>
+            </div>`;
+          })
           .join('')}</div></section>`
       )
-      .join('')}`;
+      .join('')}
+    <div class="mt-28"><button class="btn block gray" type="button" id="draw-lock">${icon('lock')} Bloquear</button></div>`;
+}
+
+async function unlockDraw(form) {
+  const input = $('#draw-pw', form);
+  const btn = $('button[type=submit]', form);
+  await busy(btn, async () => {
+    try {
+      const r = await api('/draw', { method: 'POST', body: { password: input.value } });
+      drawData = { pairs: new Map(r.pairs.map((p) => [p.giver_id, p])), check: r.check };
+      $('#tab-body').innerHTML = drawHTML();
+    } catch (err) {
+      if (err.status === 401) {
+        logout();
+        toast('Tu sesión de organizador expiró.', 'err');
+        return;
+      }
+      const msg = $('#draw-msg');
+      if (msg) {
+        msg.textContent = err.message;
+        msg.style.color = '#e5243b';
+      }
+      input.value = '';
+      input.focus();
+    }
+  });
 }
 
 // ---------------------------------------------------------------- Lista
@@ -559,11 +653,17 @@ app.addEventListener('click', async (e) => {
       if (!ok) return;
     }
     listDirty = settingsDirty = false;
+    lockDraw();
     tab = tabBtn.dataset.tab;
     try {
       sessionStorage.setItem('adminTab', tab);
     } catch {}
     renderTab();
+    return;
+  }
+  if (e.target.closest('#draw-lock')) {
+    lockDraw();
+    $('#tab-body').innerHTML = drawHTML();
     return;
   }
   const a = e.target.closest('[data-act]');
@@ -573,6 +673,12 @@ app.addEventListener('click', async (e) => {
     const guest = state.guests.find((x) => x.id === Number(g.dataset.guest));
     if (guest) openGuestSheet(guest);
   }
+});
+app.addEventListener('submit', (e) => {
+  const form = e.target.closest('#draw-unlock');
+  if (!form) return;
+  e.preventDefault();
+  unlockDraw(form);
 });
 navTrailing.addEventListener('click', (e) => {
   if (e.target.closest('#logout')) logout();

@@ -5,6 +5,7 @@ const fs = require('fs');
 const crypto = require('crypto');
 const express = require('express');
 const { DatabaseSync } = require('node:sqlite');
+const Sorteo = require('./public/draw.js'); // mismo algoritmo que usa el botón "Al azar"
 
 // ---------------------------------------------------------------------------
 // Config
@@ -82,6 +83,10 @@ if (!db.prepare('PRAGMA table_info(quinielas)').all().some((c) => c.name === 'co
   db.exec('ALTER TABLE quinielas ADD COLUMN cost_cents INTEGER NOT NULL DEFAULT 0');
 }
 
+// Candado a nivel base de datos: nadie puede recibir dos papelitos (giver_id ya es llave primaria,
+// así que nadie puede dar dos).
+db.exec('CREATE UNIQUE INDEX IF NOT EXISTS assignments_receiver_unique ON assignments(receiver_id)');
+
 // Migración: en versiones anteriores "open" ya tenía papelitos generados.
 if (
   db.prepare("SELECT value FROM settings WHERE key = 'phase'").get()?.value === 'open' &&
@@ -138,18 +143,61 @@ function parseCookies(header = '') {
   const out = {};
   for (const part of header.split(';')) {
     const i = part.indexOf('=');
-    if (i > -1) out[part.slice(0, i).trim()] = decodeURIComponent(part.slice(i + 1).trim());
+    if (i < 0) continue;
+    try {
+      out[part.slice(0, i).trim()] = decodeURIComponent(part.slice(i + 1).trim());
+    } catch {
+      // cookie malformada: se ignora
+    }
   }
   return out;
 }
-function shuffle(arr) {
-  const a = arr.slice();
-  for (let i = a.length - 1; i > 0; i--) {
-    const j = crypto.randomInt(i + 1);
-    [a[i], a[j]] = [a[j], a[i]];
-  }
-  return a;
+
+/**
+ * Freno contra adivinar contraseñas/PINs. Cada `max` fallos dentro de la ventana bloquea la
+ * llave; cada bloqueo nuevo dura el doble que el anterior (tope: maxLockMs). Vive en memoria.
+ */
+function makeLimiter({ max, windowMs, lockMs, maxLockMs = 24 * 60 * 60 * 1000 }) {
+  const map = new Map();
+  setInterval(() => {
+    const now = Date.now();
+    for (const [k, v] of map) if (v.until < now && now - v.first > windowMs && now - v.lastLock > maxLockMs) map.delete(k);
+  }, 10 * 60 * 1000).unref();
+  return {
+    /** Milisegundos que faltan de bloqueo (0 si no está bloqueado). */
+    blockedFor(key) {
+      const v = map.get(key);
+      return v && v.until > Date.now() ? v.until - Date.now() : 0;
+    },
+    fail(key) {
+      const now = Date.now();
+      let v = map.get(key);
+      if (!v) map.set(key, (v = { count: 0, first: now, until: 0, locks: 0, lastLock: 0 }));
+      if (now - v.first > windowMs) {
+        v.count = 0;
+        v.first = now;
+      }
+      if (++v.count >= max) {
+        v.until = now + Math.min(lockMs * 2 ** v.locks, maxLockMs);
+        v.locks++;
+        v.lastLock = now;
+        v.count = 0;
+        v.first = now;
+      }
+    },
+    clear(key) {
+      map.delete(key);
+    },
+  };
 }
+const minutes = (ms) => Math.max(1, Math.ceil(ms / 60000));
+// PIN: 5 fallos → 10 min, luego 20, 40, 80… (por invitado). Además, por IP: 30 fallos en 15 min.
+const pinLimiter = makeLimiter({ max: 5, windowMs: 10 * 60 * 1000, lockMs: 10 * 60 * 1000 });
+const pinIpLimiter = makeLimiter({ max: 30, windowMs: 15 * 60 * 1000, lockMs: 15 * 60 * 1000 });
+// Admin: 8 fallos en 15 min por IP → 15 min, luego 30, 60…
+const adminLimiter = makeLimiter({ max: 8, windowMs: 15 * 60 * 1000, lockMs: 15 * 60 * 1000 });
+// Desbloquear la pestaña Sorteo: 5 fallos en 15 min por IP → 15 min, luego 30, 60…
+const drawUnlockLimiter = makeLimiter({ max: 5, windowMs: 15 * 60 * 1000, lockMs: 15 * 60 * 1000 });
 
 function allGuests() {
   return db
@@ -163,47 +211,15 @@ function allGuests() {
 }
 
 /**
- * Genera un sorteo válido: nadie se regala a sí mismo y (opcional) nadie
- * regala a alguien de su misma familia. Backtracking aleatorio.
+ * Genera un sorteo válido y uniforme (ver public/draw.js): nadie se regala a sí mismo,
+ * (opcional) nadie regala a su familia, cada quien da una vez y recibe una vez.
  */
 function generateDraw(guests, avoidFamily) {
-  const n = guests.length;
-  if (n < 3) throw new HttpError(400, 'Se necesitan al menos 3 invitados para un intercambio.');
-  if (avoidFamily) {
-    const sizes = {};
-    for (const g of guests) sizes[g.family_id] = (sizes[g.family_id] || 0) + 1;
-    const max = Math.max(...Object.values(sizes));
-    if (max > n - max) {
-      throw new HttpError(400, 'Una familia tiene más de la mitad de los invitados: imposible sortear sin que se regalen entre ellos. Desactiva la regla de familias o ajusta la lista.');
-    }
-  }
-  const ok = (giver, rec) => giver.id !== rec.id && (!avoidFamily || giver.family_id !== rec.family_id);
-
-  for (let attempt = 0; attempt < 50; attempt++) {
-    // Los más restringidos primero (familias grandes).
-    const sizes = {};
-    for (const g of guests) sizes[g.family_id] = (sizes[g.family_id] || 0) + 1;
-    const givers = shuffle(guests).sort((a, b) => sizes[b.family_id] - sizes[a.family_id]);
-    const used = new Set();
-    const result = new Map();
-    let steps = 0;
-    const solve = (i) => {
-      if (++steps > 200000) return false;
-      if (i === givers.length) return true;
-      const g = givers[i];
-      for (const r of shuffle(guests)) {
-        if (used.has(r.id) || !ok(g, r)) continue;
-        used.add(r.id);
-        result.set(g.id, r.id);
-        if (solve(i + 1)) return true;
-        used.delete(r.id);
-        result.delete(g.id);
-      }
-      return false;
-    };
-    if (solve(0)) return result;
-  }
-  throw new HttpError(400, 'No se encontró un sorteo válido con las reglas actuales.');
+  const err = Sorteo.feasibilityError(guests, avoidFamily);
+  if (err) throw new HttpError(400, err);
+  const { draw, method } = Sorteo.generate(guests, { avoidFamily });
+  if (method !== 'exact') console.log(`[sorteo] reglas muy estrictas: se usó el método de mezcla (${guests.length} invitados).`);
+  return draw;
 }
 
 function parseGuestList(text) {
@@ -256,6 +272,10 @@ const app = express();
 app.set('trust proxy', 1); // solo Caddy va al frente
 app.disable('x-powered-by');
 app.use((_req, res, next) => {
+  res.setHeader(
+    'Content-Security-Policy',
+    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
+  );
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Referrer-Policy', 'same-origin');
   res.setHeader('X-Frame-Options', 'DENY');
@@ -306,8 +326,14 @@ const requireMe = (req) => {
   return req.me;
 };
 const requireAdmin = (req, _res, next) => {
+  const wait = adminLimiter.blockedFor(req.ip);
+  if (wait) return next(new HttpError(429, `Demasiados intentos. Espera ${minutes(wait)} min.`));
   const key = req.headers['x-admin-key'];
-  if (!ADMIN_PASSWORD || !key || !safeEqual(key, ADMIN_PASSWORD)) return next(new HttpError(401, 'Contraseña de admin incorrecta.'));
+  if (!ADMIN_PASSWORD || !key || !safeEqual(key, ADMIN_PASSWORD)) {
+    adminLimiter.fail(req.ip);
+    return next(new HttpError(401, 'Contraseña de admin incorrecta.'));
+  }
+  adminLimiter.clear(req.ip);
   next();
 };
 
@@ -342,7 +368,6 @@ app.get(
   })
 );
 
-const failedPins = new Map();
 app.post(
   '/api/claim',
   wrap((req, res) => {
@@ -351,15 +376,14 @@ app.post(
     const g = db.prepare('SELECT id, pin_hash FROM guests WHERE id = ?').get(Number(guestId));
     if (!g) throw new HttpError(404, 'Invitado no encontrado.');
     if (g.pin_hash) {
-      // Freno simple contra adivinar PINs: 5 intentos fallidos => 10 minutos bloqueado.
-      const f = failedPins.get(g.id);
-      if (f && f.count >= 5 && Date.now() - f.at < 10 * 60 * 1000) throw new HttpError(429, 'Demasiados intentos. Espera 10 minutos o pide al organizador que restablezca tu PIN.');
+      const wait = Math.max(pinLimiter.blockedFor(g.id), pinIpLimiter.blockedFor(req.ip));
+      if (wait) throw new HttpError(429, `Demasiados intentos. Espera ${minutes(wait)} min o pide al organizador que restablezca tu PIN.`);
       if (!checkPin(pin, g.pin_hash)) {
-        const prev = f && Date.now() - f.at < 10 * 60 * 1000 ? f.count : 0;
-        failedPins.set(g.id, { count: prev + 1, at: Date.now() });
+        pinLimiter.fail(g.id);
+        pinIpLimiter.fail(req.ip);
         throw new HttpError(403, 'PIN incorrecto. Si lo olvidaste, pide al organizador que lo restablezca.');
       }
-      failedPins.delete(g.id);
+      pinLimiter.clear(g.id);
     } else {
       db.prepare("UPDATE guests SET pin_hash = ?, claimed_at = datetime('now') WHERE id = ?").run(hashPin(pin), g.id);
     }
@@ -398,8 +422,8 @@ function validatePredictions(predictions) {
   const givers = new Set();
   const receivers = new Set();
   for (const p of predictions) {
-    const g = byId.get(Number(p.giver_id));
-    const r = byId.get(Number(p.receiver_id));
+    const g = byId.get(Number(p?.giver_id));
+    const r = byId.get(Number(p?.receiver_id));
     if (!g || !r) throw new HttpError(400, 'Hay invitados inválidos en la quiniela.');
     if (g.id === r.id) throw new HttpError(400, `${g.name} no puede regalarse a sí mismo.`);
     if (avoid && g.family_id === r.family_id) throw new HttpError(400, `${g.name} y ${r.name} son de la misma familia.`);
@@ -537,14 +561,11 @@ admin.get(
       .prepare(
         `SELECT g.id, g.name, f.name AS family, g.claimed_at,
                 a.drawn_at,
-                r.name AS receiver, rf.name AS receiver_family,
                 (SELECT COUNT(*) FROM quinielas q WHERE q.author_id = g.id) AS quinielas,
                 (SELECT COALESCE(SUM(cost_cents), 0) FROM quinielas q WHERE q.author_id = g.id) AS owed_cents,
                 (SELECT COUNT(*) FROM sessions s WHERE s.guest_id = g.id) AS sessions
          FROM guests g JOIN families f ON f.id = g.family_id
          LEFT JOIN assignments a ON a.giver_id = g.id
-         LEFT JOIN guests r ON r.id = a.receiver_id
-         LEFT JOIN families rf ON rf.id = r.family_id
          ORDER BY f.id, g.id`
       )
       .all();
@@ -566,6 +587,38 @@ admin.get(
       guests,
       listText,
     };
+  })
+);
+
+// Quién le regala a quién. El estado general del panel NO lo incluye: sólo se entrega aquí,
+// escribiendo otra vez la contraseña (pestaña Sorteo bloqueada).
+admin.post(
+  '/draw',
+  wrap((req) => {
+    const wait = drawUnlockLimiter.blockedFor(req.ip);
+    if (wait) throw new HttpError(429, `Demasiados intentos. Espera ${minutes(wait)} min.`);
+    const password = req.body?.password;
+    if (typeof password !== 'string' || !safeEqual(password, ADMIN_PASSWORD)) {
+      drawUnlockLimiter.fail(req.ip);
+      throw new HttpError(403, 'Contraseña incorrecta.');
+    }
+    drawUnlockLimiter.clear(req.ip);
+    const pairs = db
+      .prepare(
+        `SELECT a.giver_id, a.receiver_id, r.name AS receiver, rf.name AS receiver_family
+         FROM assignments a JOIN guests r ON r.id = a.receiver_id JOIN families rf ON rf.id = r.family_id`
+      )
+      .all();
+    // Verificación para el organizador: todos dan, todos reciben, sin repetidos ni reglas rotas.
+    const guests = allGuests();
+    const map = new Map(pairs.map((p) => [p.giver_id, p.receiver_id]));
+    const check = {
+      guests: guests.length,
+      givers: map.size,
+      receivers: new Set(map.values()).size,
+      valid: Sorteo.isValidDraw(guests, getSetting('avoid_same_family') === '1', map),
+    };
+    return { pairs, check };
   })
 );
 
@@ -642,11 +695,16 @@ admin.post(
   '/start-draw',
   wrap(() => {
     if (getSetting('phase') !== 'open') throw new HttpError(400, 'Primero abre las quinielas.');
-    const draw = generateDraw(allGuests(), getSetting('avoid_same_family') === '1');
+    const guests = allGuests();
+    const avoid = getSetting('avoid_same_family') === '1';
+    const draw = generateDraw(guests, avoid);
     tx(() => {
       db.exec('DELETE FROM assignments');
       const ins = db.prepare('INSERT INTO assignments (giver_id, receiver_id) VALUES (?, ?)');
       for (const [g, r] of draw) ins.run(g, r);
+      // Doble verificación con lo que quedó guardado: si algo no cuadra, se revierte todo.
+      const saved = new Map(db.prepare('SELECT giver_id, receiver_id FROM assignments').all().map((a) => [a.giver_id, a.receiver_id]));
+      if (!Sorteo.isValidDraw(guests, avoid, saved)) throw new Error('El sorteo guardado no pasó la verificación.');
       setSetting('phase', 'drawing');
     });
     return { ok: true };
@@ -689,7 +747,7 @@ admin.post(
   wrap((req) => {
     const id = Number(req.params.id);
     if (!db.prepare('SELECT id FROM guests WHERE id = ?').get(id)) throw new HttpError(404, 'Invitado no encontrado.');
-    failedPins.delete(id);
+    pinLimiter.clear(id);
     tx(() => {
       db.prepare('DELETE FROM sessions WHERE guest_id = ?').run(id);
       db.prepare('UPDATE guests SET pin_hash = NULL, claimed_at = NULL WHERE id = ?').run(id);
