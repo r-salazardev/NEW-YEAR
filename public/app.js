@@ -437,6 +437,7 @@ function slipHTML(r, flipped) {
           <span class="eyebrow">Le regalas a</span>
           <span class="who">${esc(r.name)}</span>
           <span class="fam">${esc(r.family)}</span>
+          ${r.note ? `<span class="note">${esc(r.note)}</span>` : ''}
         </span>
       </button>
     </div>
@@ -682,7 +683,7 @@ function renderEditor() {
          (f) => `<section class="section"><div class="section-header ed-cols"><h2>${esc(f.name)} · da</h2><span>recibe ${icon('gift')}</span></div><div class="group">${f.members
            .map(
              (g) => `<div class="cell has-avatar">${avatar(g.name)}
-               <span class="cell-body"><span class="cell-title">${esc(g.name)}${g.id === me.id ? ' <span class="you">(Tú)</span>' : ''}</span><span class="cell-sub">le regala a →</span></span>
+               <span class="cell-body"><span class="cell-title">${esc(g.name)}${g.id === me.id ? ' <span class="you">(Tú)</span>' : ''}</span><span class="cell-sub">${g.note ? `<span class="who-note">${esc(g.note)}</span> · ` : ''}le regala a →</span></span>
                <span class="picker"><select data-giver="${g.id}" aria-label="A quién le regala ${esc(g.name)}"><option value="">¿A quién?</option>${optionsFor(g)}</select></span>
              </div>`
            )

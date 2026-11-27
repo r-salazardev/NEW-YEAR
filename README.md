@@ -41,6 +41,7 @@ docker compose -f docker-compose.yml -f docker-compose.local.yml up --build
 - Antes de guardar, el servidor vuelve a verificar el sorteo; además la base de datos impide que alguien dé o reciba dos papelitos.
 - "Sacar papelito" revela la asignación de esa persona y lo registra. En Participantes, el organizador ve quién ya vio su papelito y quién falta (sin ver a quién le tocó).
 - La primera vez cada invitado crea su PIN y lo confirma; después de 5 intentos fallidos se bloquea 10 minutos, y cada bloqueo siguiente dura el doble. La contraseña del organizador también se bloquea tras 8 intentos fallidos.
+- **Nota "¿Quién es?"** (Participantes → nombre): para invitados que no todos conocen, p. ej. "Es la mamá de Anette". La ve quien le toque regalarle en su papelito, aparece bajo su nombre en las quinielas y en la pantalla de revelación. En "¿Qué familias la ven?" puedes marcar sólo algunas familias: las demás no la ven ni en su papelito ni en las quinielas (sin marcar ninguna, la ven todos; la pantalla de revelación siempre la muestra). Se puede cambiar en cualquier fase y se conserva si se vuelve a guardar la lista.
 - Si alguien olvida su PIN, el organizador lo restablece desde el panel (Participantes → nombre → Restablecer PIN).
 - Si alguien eligió un nombre que no era suyo, restablecer el PIN cierra esa sesión.
 - **Reiniciar sorteo** borra papelitos y quinielas (conserva lista y PINs) y regresa a "Preparando".

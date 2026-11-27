@@ -126,6 +126,36 @@ test('flujo completo: lista → quinielas → sorteo → papelitos → resultado
   assert.equal((await call('POST', '/api/draw', me(g0))).status, 400);
   assert.equal((await call('GET', '/api/results')).status, 400);
 
+  // Nota de quién es: se guarda en cualquier fase, se limpia de espacios y tiene tope.
+  const noted = guests[4];
+  const noteRes = await adm('POST', `/guests/${noted.id}/note`, { note: '  es la mamá   de Anette ' });
+  assert.equal(noteRes.status, 200);
+  assert.equal(noteRes.data.note, 'es la mamá de Anette');
+  assert.equal((await adm('POST', `/guests/${noted.id}/note`, { note: 'x'.repeat(121) })).status, 400);
+  assert.equal((await adm('POST', '/guests/99999/note', { note: 'hola' })).status, 404);
+  assert.equal((await call('POST', `/api/admin/guests/${noted.id}/note`, { body: { note: 'hola' } })).status, 401);
+  const withNote = (await call('GET', '/api/state')).data.guests.find((g) => g.id === noted.id);
+  assert.equal(withNote.note, 'es la mamá de Anette');
+  assert.equal(withNote.note_families, undefined, 'la lista de familias de la nota no se publica');
+
+  // Nota sólo para ciertas familias: la ven ellas; los demás (y quien no ha entrado) no.
+  const famName = (id) => guests.find((g) => g.family_id === id).family;
+  const noteState = async (cookie) => (await call('GET', '/api/state', cookie ? { cookie } : {})).data.guests.find((g) => g.id === noted.id).note;
+  const inFam = guests.find((g) => g.family_id === 2);
+  const outFam = guests.find((g) => g.family_id === 3);
+  assert.equal((await adm('POST', `/guests/${noted.id}/note`, { note: 'es la mamá de Anette', families: [famName(2)] })).status, 200);
+  assert.equal(await noteState(cookies.get(inFam.id)), 'es la mamá de Anette');
+  assert.equal(await noteState(cookies.get(outFam.id)), '');
+  assert.equal(await noteState(null), '');
+  assert.equal((await adm('POST', `/guests/${noted.id}/note`, { note: 'x', families: ['Familia Inventada'] })).status, 400);
+  assert.equal((await adm('POST', `/guests/${noted.id}/note`, { note: 'x', families: 'no' })).status, 400);
+  const adminNoted = (await adm('GET', '/state')).data.guests.find((g) => g.id === noted.id);
+  assert.deepEqual(adminNoted.note_families, [famName(2)]);
+  // Sin `families` se conservan; con [] vuelve a ser para todos.
+  assert.deepEqual((await adm('POST', `/guests/${noted.id}/note`, { note: 'es la mamá de Anette' })).data.families, [famName(2)]);
+  assert.deepEqual((await adm('POST', `/guests/${noted.id}/note`, { note: 'es la mamá de Anette', families: [] })).data.families, []);
+  assert.equal(await noteState(cookies.get(outFam.id)), 'es la mamá de Anette');
+
   // Inicia el sorteo.
   assert.equal((await adm('POST', '/start-draw')).status, 200);
   assert.equal((await adm('POST', '/start-draw')).status, 400, 'no se puede volver a sortear sin reiniciar');
@@ -143,12 +173,23 @@ test('flujo completo: lista → quinielas → sorteo → papelitos → resultado
     assert.equal(r.status, 200);
     assert.equal(r.data.firstTime, true);
     draw.set(g.id, byName.get(r.data.receiver.name).id);
+    // Quien le toca a la persona con nota la ve en su papelito; los demás reciben nota vacía.
+    assert.equal(r.data.receiver.note, r.data.receiver.name === noted.name ? 'es la mamá de Anette' : '');
     const again = await call('POST', '/api/draw', me(g));
     assert.equal(again.data.receiver.name, r.data.receiver.name, 'el papelito no cambia');
     assert.equal(again.data.firstTime, false);
     assert.equal((await call('GET', '/api/my-draw', me(g))).data.receiver.name, r.data.receiver.name);
   }
   assert.ok(Sorteo.isValidDraw(guests, true, draw), 'el sorteo guardado debe ser válido');
+
+  // El papelito respeta qué familias ven la nota.
+  const giverOfNoted = guests.find((g) => draw.get(g.id) === noted.id);
+  const papelNote = async () => (await call('GET', '/api/my-draw', me(giverOfNoted))).data.receiver.note;
+  await adm('POST', `/guests/${noted.id}/note`, { note: 'es la mamá de Anette', families: [giverOfNoted.family] });
+  assert.equal(await papelNote(), 'es la mamá de Anette');
+  const otherFam = guests.find((g) => g.family !== giverOfNoted.family && g.family !== noted.family).family;
+  await adm('POST', `/guests/${noted.id}/note`, { note: 'es la mamá de Anette', families: [otherFam] });
+  assert.equal(await papelNote(), '');
 
   // Panel: el estado general NO trae los papelitos; sólo /draw con la contraseña escrita de nuevo.
   const { data: adminState } = await adm('GET', '/state');
@@ -169,6 +210,7 @@ test('flujo completo: lista → quinielas → sorteo → papelitos → resultado
   const pres = await adm('POST', '/presentation', { password: ADMIN });
   assert.equal(pres.status, 200);
   assert.equal(pres.data.guests.length, 12);
+  assert.equal(pres.data.guests.find((g) => g.id === noted.id).note, 'es la mamá de Anette');
   assert.equal(pres.data.pairs.length, 12);
   for (const [g, r] of pres.data.pairs) assert.equal(r, draw.get(g));
   assert.equal(pres.data.quinielas.length, quinielas.size);

@@ -241,6 +241,7 @@ function peopleHTML() {
               : 'No ha entrado',
             g.quinielas ? plural(g.quinielas, 'quiniela', 'quinielas') : null,
             g.owed_cents ? `debe ${money(g.owed_cents)}` : null,
+            g.note ? `“${g.note}”${g.note_families?.length ? ` (la ${g.note_families.length === 1 ? 've 1 familia' : `ven ${g.note_families.length} familias`})` : ''}` : null,
           ]
             .filter(Boolean)
             .join(' · ');
@@ -317,6 +318,21 @@ function openGuestSheet(g) {
         <div class="section" style="margin-top:20px"><div class="group">${rows
           .map(([k, v]) => `<div class="cell"><span class="cell-body cell-title">${k}</span><span class="cell-trailing">${v}</span></div>`)
           .join('')}</div></div>
+        <form class="section" id="note-form" autocomplete="off">
+          <div class="section-header"><h2>¿Quién es?</h2></div>
+          <div class="group"><label class="cell"><input class="field-inline" id="g-note" style="text-align:left" maxlength="120" placeholder="Ej. es la mamá de Anette" aria-label="Nota de quién es ${esc(g.name)}" value="${esc(g.note || '')}"></label></div>
+          <p class="section-footer">Para quien no lo conoce. Aparece en el papelito de quien le toque regalarle y junto a su nombre en las quinielas. Déjalo vacío si todos lo conocen.</p>
+          <div class="section-header" style="margin-top:18px"><h2>¿Qué familias la ven?</h2></div>
+          <div class="group">${(state.familyNames || [])
+            .map(
+              (f) => `<label class="cell"><span class="cell-body"><span class="cell-title">${esc(f)}</span>${
+                f === g.family ? '<span class="cell-sub">Su familia</span>' : ''
+              }</span><span class="switch"><input type="checkbox" data-note-fam="${esc(f)}" aria-label="${esc(f)} ve la nota"${(g.note_families || []).includes(f) ? 'checked' : ''}><span></span></span></label>`
+            )
+            .join('')}</div>
+          <p class="section-footer" id="g-note-who"></p>
+          <button class="btn block tinted" type="submit" id="g-note-save" disabled style="margin-top:12px">Guardar nota</button>
+        </form>
         ${
           g.claimed_at
             ? `<div class="section"><div class="group"><button class="cell destructive" type="button" id="reset-pin">Restablecer PIN</button></div>
@@ -324,6 +340,33 @@ function openGuestSheet(g) {
             : ''
         }`;
       $('[data-close]', panel).addEventListener('click', () => close());
+      const noteInput = $('#g-note', panel);
+      const noteBtn = $('#g-note-save', panel);
+      const norm = (s) => s.replace(/\s+/g, ' ').trim();
+      const picked = () => $$('[data-note-fam]', panel).filter((c) => c.checked).map((c) => c.dataset.noteFam);
+      const sameSet = (a, b) => a.length === b.length && a.every((x) => b.includes(x));
+      const syncNote = () => {
+        const fams = picked();
+        noteBtn.disabled = norm(noteInput.value) === (g.note || '') && sameSet(fams, g.note_families || []);
+        $('#g-note-who', panel).textContent = fams.length
+          ? `Sólo la ${fams.length === 1 ? 've esa familia' : `ven esas ${fams.length} familias`}; el resto no la ve en su papelito ni en las quinielas. En la pantalla de revelación siempre se muestra.`
+          : 'Si no marcas ninguna, la ven todos. En la pantalla de revelación siempre se muestra.';
+      };
+      syncNote();
+      noteInput.addEventListener('input', syncNote);
+      panel.addEventListener('change', (e) => e.target.matches('[data-note-fam]') && syncNote());
+      $('#note-form', panel).addEventListener('submit', (e) => {
+        e.preventDefault();
+        busy(noteBtn, async () => {
+          const r = await act(() => api(`/guests/${g.id}/note`, { method: 'POST', body: { note: noteInput.value, families: picked() } }));
+          if (!r) return;
+          g.note = r.note;
+          g.note_families = r.families;
+          noteInput.value = r.note;
+          toast(r.note ? 'Nota guardada' : 'Nota borrada');
+          await refresh({ quiet: true });
+        }).then(syncNote);
+      });
       $('#reset-pin', panel)?.addEventListener('click', async () => {
         const ok = await confirm(`¿Restablecer el PIN de ${g.name}?`, 'Tendrá que crear uno nuevo la próxima vez que entre.', { confirmLabel: 'Restablecer', destructive: true });
         if (!ok) return;

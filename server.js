@@ -83,6 +83,32 @@ if (!db.prepare('PRAGMA table_info(quinielas)').all().some((c) => c.name === 'co
   db.exec('ALTER TABLE quinielas ADD COLUMN cost_cents INTEGER NOT NULL DEFAULT 0');
 }
 
+// Migración: nota por invitado para quien no lo conoce (p. ej. "es la mamá de Anette"). Se muestra a
+// quien le toque regalarle, en las quinielas y en la pantalla de revelación.
+if (!db.prepare('PRAGMA table_info(guests)').all().some((c) => c.name === 'note')) {
+  db.exec("ALTER TABLE guests ADD COLUMN note TEXT NOT NULL DEFAULT ''");
+}
+// Qué familias ven la nota: arreglo JSON con NOMBRES de familia (los ids cambian al volver a guardar
+// la lista). Vacío = la ven todos. La pantalla de revelación (organizador) siempre la muestra.
+if (!db.prepare('PRAGMA table_info(guests)').all().some((c) => c.name === 'note_families')) {
+  db.exec("ALTER TABLE guests ADD COLUMN note_families TEXT NOT NULL DEFAULT '[]'");
+}
+const MAX_NOTE = 120;
+function noteFamilies(json) {
+  try {
+    const a = JSON.parse(json || '[]');
+    return Array.isArray(a) ? a.filter((x) => typeof x === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+/** La nota tal como la ve alguien de la familia `viewerFamily` (nombre; null si no ha entrado). */
+function noteFor(note, familiesJson, viewerFamily) {
+  if (!note) return '';
+  const fams = noteFamilies(familiesJson);
+  return !fams.length || (viewerFamily != null && fams.includes(viewerFamily)) ? note : '';
+}
+
 // Candado a nivel base de datos: nadie puede recibir dos papelitos (giver_id ya es llave primaria,
 // así que nadie puede dar dos).
 db.exec('CREATE UNIQUE INDEX IF NOT EXISTS assignments_receiver_unique ON assignments(receiver_id)');
@@ -202,7 +228,7 @@ const drawUnlockLimiter = makeLimiter({ max: 5, windowMs: 15 * 60 * 1000, lockMs
 function allGuests() {
   return db
     .prepare(
-      `SELECT g.id, g.name, g.family_id, f.name AS family, g.claimed_at IS NOT NULL AS claimed
+      `SELECT g.id, g.name, g.family_id, f.name AS family, g.note, g.note_families, g.claimed_at IS NOT NULL AS claimed
        FROM guests g JOIN families f ON f.id = g.family_id
        ORDER BY f.id, g.id`
     )
@@ -349,7 +375,8 @@ function meInfo(me) {
 app.get(
   '/api/state',
   wrap((req) => {
-    const guests = allGuests();
+    // Cada quien sólo recibe las notas que su familia puede ver (y nunca la lista de familias).
+    const guests = allGuests().map(({ note_families, ...g }) => ({ ...g, note: noteFor(g.note, note_families, req.me?.family) }));
     const drawn = db.prepare('SELECT COUNT(*) AS c FROM assignments WHERE drawn_at IS NOT NULL').get().c;
     const totalQ = db.prepare('SELECT COUNT(*) AS c FROM quinielas').get().c;
     const withQuiniela = db.prepare('SELECT COUNT(DISTINCT author_id) AS c FROM quinielas').get().c;
@@ -494,6 +521,14 @@ app.delete(
   })
 );
 
+/** A quién le regala `me`, con la nota sólo si su familia puede verla. */
+function receiverFor(receiverId, me) {
+  const r = db
+    .prepare('SELECT g.name, f.name AS family, g.note, g.note_families FROM guests g JOIN families f ON f.id = g.family_id WHERE g.id = ?')
+    .get(receiverId);
+  return { name: r.name, family: r.family, note: noteFor(r.note, r.note_families, me.family) };
+}
+
 app.post(
   '/api/draw',
   wrap((req) => {
@@ -506,8 +541,7 @@ app.post(
       if (phase !== 'drawing') throw new HttpError(400, 'El sorteo ya está cerrado.');
       db.prepare("UPDATE assignments SET drawn_at = datetime('now') WHERE giver_id = ?").run(me.id);
     }
-    const r = db.prepare('SELECT g.name, f.name AS family FROM guests g JOIN families f ON f.id = g.family_id WHERE g.id = ?').get(a.receiver_id);
-    return { receiver: r, firstTime: !a.drawn_at };
+    return { receiver: receiverFor(a.receiver_id, me), firstTime: !a.drawn_at };
   })
 );
 
@@ -517,8 +551,7 @@ app.get(
     const me = requireMe(req);
     const a = db.prepare('SELECT receiver_id, drawn_at FROM assignments WHERE giver_id = ?').get(me.id);
     if (!a?.drawn_at) return { receiver: null };
-    const r = db.prepare('SELECT g.name, f.name AS family FROM guests g JOIN families f ON f.id = g.family_id WHERE g.id = ?').get(a.receiver_id);
-    return { receiver: r };
+    return { receiver: receiverFor(a.receiver_id, me) };
   })
 );
 
@@ -559,7 +592,7 @@ admin.get(
   wrap(() => {
     const guests = db
       .prepare(
-        `SELECT g.id, g.name, f.name AS family, g.claimed_at,
+        `SELECT g.id, g.name, f.name AS family, g.note, g.note_families, g.claimed_at,
                 a.drawn_at,
                 (SELECT COUNT(*) FROM quinielas q WHERE q.author_id = g.id) AS quinielas,
                 (SELECT COALESCE(SUM(cost_cents), 0) FROM quinielas q WHERE q.author_id = g.id) AS owed_cents,
@@ -568,7 +601,8 @@ admin.get(
          LEFT JOIN assignments a ON a.giver_id = g.id
          ORDER BY f.id, g.id`
       )
-      .all();
+      .all()
+      .map((g) => ({ ...g, note_families: noteFamilies(g.note_families) }));
     const families = db
       .prepare(
         `SELECT f.name, (SELECT GROUP_CONCAT(name, ', ') FROM (SELECT name FROM guests WHERE family_id = f.id ORDER BY id)) AS members
@@ -585,6 +619,7 @@ admin.get(
       quinielaCostCents: Number(getSetting('quiniela_cost_cents')),
       paymentContact: getSetting('payment_contact') || '',
       guests,
+      familyNames: families.map((f) => f.name),
       listText,
     };
   })
@@ -640,7 +675,7 @@ admin.post(
       }
       drawUnlockLimiter.clear(req.ip);
     }
-    const guests = allGuests().map(({ id, name, family }) => ({ id, name, family }));
+    const guests = allGuests().map(({ id, name, family, note }) => ({ id, name, family, note }));
     const pairs = db.prepare('SELECT giver_id, receiver_id FROM assignments').all().map((a) => [a.giver_id, a.receiver_id]);
     const preds = db.prepare('SELECT giver_id, receiver_id FROM predictions WHERE quiniela_id = ?');
     const quinielas = db
@@ -682,18 +717,18 @@ admin.post(
     const families = parseGuestList(req.body?.text);
     if (!families.length) throw new HttpError(400, 'La lista está vacía.');
     // Conserva PIN/sesiones de quienes ya existían con el mismo nombre.
-    const old = new Map(db.prepare('SELECT id, name, pin_hash, claimed_at FROM guests').all().map((g) => [g.name.toLowerCase(), g]));
+    const old = new Map(db.prepare('SELECT id, name, pin_hash, claimed_at, note, note_families FROM guests').all().map((g) => [g.name.toLowerCase(), g]));
     const oldSessions = db.prepare('SELECT token, guest_id, created_at, user_agent FROM sessions').all();
     tx(() => {
       db.exec('DELETE FROM sessions; DELETE FROM predictions; DELETE FROM quinielas; DELETE FROM assignments; DELETE FROM guests; DELETE FROM families;');
       const idMap = new Map();
       const insF = db.prepare('INSERT INTO families (name) VALUES (?)');
-      const insG = db.prepare('INSERT INTO guests (family_id, name, pin_hash, claimed_at) VALUES (?, ?, ?, ?)');
+      const insG = db.prepare('INSERT INTO guests (family_id, name, pin_hash, claimed_at, note, note_families) VALUES (?, ?, ?, ?, ?, ?)');
       for (const f of families) {
         const { lastInsertRowid } = insF.run(f.name);
         for (const m of f.members) {
           const prev = old.get(m.toLowerCase());
-          const r = insG.run(lastInsertRowid, m, prev?.pin_hash ?? null, prev?.claimed_at ?? null);
+          const r = insG.run(lastInsertRowid, m, prev?.pin_hash ?? null, prev?.claimed_at ?? null, prev?.note ?? '', prev?.note_families ?? '[]');
           if (prev) idMap.set(prev.id, Number(r.lastInsertRowid));
         }
       }
@@ -769,6 +804,29 @@ admin.post(
       setSetting('phase', 'setup');
     });
     return { ok: true };
+  })
+);
+
+// Nota de quién es esta persona, para quien no la conoce, y qué familias la ven (`families`:
+// nombres; vacío = todos; si no se manda, se conserva). Se puede cambiar en cualquier fase.
+admin.post(
+  '/guests/:id/note',
+  wrap((req) => {
+    const id = Number(req.params.id);
+    const g = db.prepare('SELECT id, note_families FROM guests WHERE id = ?').get(id);
+    if (!g) throw new HttpError(404, 'Invitado no encontrado.');
+    const note = String(req.body?.note ?? '').replace(/\s+/g, ' ').trim();
+    if (note.length > MAX_NOTE) throw new HttpError(400, `La nota es demasiado larga (máx. ${MAX_NOTE} caracteres).`);
+    let families = noteFamilies(g.note_families);
+    if (req.body?.families !== undefined) {
+      if (!Array.isArray(req.body.families)) throw new HttpError(400, 'Las familias no son válidas.');
+      const known = new Set(db.prepare('SELECT name FROM families').all().map((f) => f.name));
+      families = [...new Set(req.body.families.map(String))];
+      const bad = families.find((f) => !known.has(f));
+      if (bad) throw new HttpError(400, `No existe la familia "${bad.slice(0, 40)}".`);
+    }
+    db.prepare('UPDATE guests SET note = ?, note_families = ? WHERE id = ?').run(note, JSON.stringify(families), id);
+    return { ok: true, note, families };
   })
 );
 

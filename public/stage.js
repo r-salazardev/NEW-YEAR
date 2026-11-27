@@ -326,13 +326,16 @@ const stage = (() => {
     el.className = 'st-spot' + (animate ? '' : ' instant');
     el.innerHTML = `
       <div class="st-spot-card" role="status" aria-live="assertive">
-        <div class="st-spot-giver">${avatar(giver.name, 'xl')}<h2>${esc(giver.name)}</h2><p>${esc(giver.family)}</p></div>
+        <div class="st-spot-giver">${avatar(giver.name, 'xl')}<h2>${esc(giver.name)}</h2><p>${esc(giver.family)}</p>${
+          giver.note ? `<span class="st-note">${esc(giver.note)}</span>` : ''
+        }</div>
         <p class="st-says">le regala a<span class="st-dots" aria-hidden="true"><i></i><i></i><i></i></span></p>
         <div class="st-reel-wrap">
           <span class="st-rays" aria-hidden="true"></span>
           <div class="st-reel"><div class="st-reel-track" style="--idx:0">${names.map((n, i) => `<span${i === names.length - 1 ? ' class="final"' : ''}>${esc(n)}</span>`).join('')}</div></div>
         </div>
         <p class="st-spot-fam">${avatar(receiver.name)}<span>${esc(receiver.family)}</span></p>
+        ${receiver.note ? `<p class="st-spot-fam st-spot-note"><span class="st-note">${esc(receiver.note)}</span></p>` : ''}
         <div class="st-spot-hits">${hitsHTML(giverId)}</div>
         ${
           !fresh
