@@ -653,7 +653,12 @@ function renderEditor() {
     [...families]
       .map(([, f]) => {
         const opts = f.members.filter((r) => r.id !== giver.id);
-        return opts.length ? `<optgroup label="${esc(f.name)}">${opts.map((r) => `<option value="${r.id}">${esc(r.name)}</option>`).join('')}</optgroup>` : '';
+        // Con nota, la opción dice "Deyanira — Es la mamá de Anette" al elegir; ya elegida, sólo el nombre (ver syncEditor).
+        const opt = (r) => {
+          const full = r.note ? `${r.name} — ${r.note}` : r.name;
+          return `<option value="${r.id}" data-name="${esc(r.name)}" data-full="${esc(full)}">${esc(full)}</option>`;
+        };
+        return opts.length ? `<optgroup label="${esc(f.name)}">${opts.map(opt).join('')}</optgroup>` : '';
       })
       .join('');
 
@@ -734,6 +739,9 @@ function syncEditor() {
       if (!o.value) continue;
       const owner = taken.get(o.value);
       o.disabled = !!owner && owner !== s.dataset.giver;
+      // La opción elegida muestra sólo el nombre (cabe en la fila); las demás, nombre y nota.
+      const text = o.value === s.value ? o.dataset.name : o.dataset.full;
+      if (text && o.textContent !== text) o.textContent = text;
     }
   }
   const filled = taken.size;
