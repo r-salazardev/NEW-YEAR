@@ -653,11 +653,10 @@ function renderEditor() {
     [...families]
       .map(([, f]) => {
         const opts = f.members.filter((r) => r.id !== giver.id);
-        // Con nota, la opción dice "Deyanira — Es la mamá de Anette" al elegir; ya elegida, sólo el nombre (ver syncEditor).
-        const opt = (r) => {
-          const full = r.note ? `${r.name} — ${r.note}` : r.name;
-          return `<option value="${r.id}" data-name="${esc(r.name)}" data-full="${esc(full)}">${esc(full)}</option>`;
-        };
+        // Las opciones dicen sólo el nombre; mientras la lista está abierta se agrega la nota
+        // ("Deyanira — Es la mamá de Anette"). Ver showNotesInPicker.
+        const opt = (r) =>
+          `<option value="${r.id}" data-name="${esc(r.name)}"${r.note ? ` data-full="${esc(`${r.name} — ${r.note}`)}"` : ''}>${esc(r.name)}</option>`;
         return opts.length ? `<optgroup label="${esc(f.name)}">${opts.map(opt).join('')}</optgroup>` : '';
       })
       .join('');
@@ -687,8 +686,10 @@ function renderEditor() {
        .map(
          (f) => `<section class="section"><div class="section-header ed-cols"><h2>${esc(f.name)} · da</h2><span>recibe ${icon('gift')}</span></div><div class="group">${f.members
            .map(
-             (g) => `<div class="cell has-avatar">${avatar(g.name)}
-               <span class="cell-body"><span class="cell-title">${esc(g.name)}${g.id === me.id ? ' <span class="you">(Tú)</span>' : ''}</span><span class="cell-sub">${g.note ? `<span class="who-note">${esc(g.note)}</span> · ` : ''}le regala a →</span></span>
+             (g) => `<div class="cell has-avatar ed-row">${avatar(g.name)}
+               <span class="cell-body"><span class="cell-title">${esc(g.name)}${g.id === me.id ? ' <span class="you">(Tú)</span>' : ''}</span>${
+                 g.note ? `<span class="who-note">${icon('person')}<span>${esc(g.note)}</span></span>` : ''
+               }<span class="cell-sub">le regala a →</span></span>
                <span class="picker"><select data-giver="${g.id}" aria-label="A quién le regala ${esc(g.name)}"><option value="">¿A quién?</option>${optionsFor(g)}</select></span>
              </div>`
            )
@@ -739,9 +740,6 @@ function syncEditor() {
       if (!o.value) continue;
       const owner = taken.get(o.value);
       o.disabled = !!owner && owner !== s.dataset.giver;
-      // La opción elegida muestra sólo el nombre (cabe en la fila); las demás, nombre y nota.
-      const text = o.value === s.value ? o.dataset.name : o.dataset.full;
-      if (text && o.textContent !== text) o.textContent = text;
     }
   }
   const filled = taken.size;
@@ -835,7 +833,35 @@ async function leaveEditor() {
 }
 
 app.addEventListener('change', (e) => {
-  if (view === 'editor' && e.target.matches('select[data-giver]')) syncEditor();
+  if (view === 'editor' && e.target.matches('select[data-giver]')) {
+    showNotesInPicker(e.target, false);
+    syncEditor();
+  }
+});
+
+/**
+ * Notas dentro de la lista "¿A quién?": sólo mientras está abierta. Cerrada, cada opción dice
+ * sólo el nombre; si no, el selector mediría lo que la opción más larga y apretaría la fila.
+ */
+function showNotesInPicker(sel, on) {
+  for (const o of sel.options) {
+    if (!o.dataset.full) continue;
+    const text = on ? o.dataset.full : o.dataset.name;
+    if (o.textContent !== text) o.textContent = text;
+  }
+}
+for (const type of ['focusin', 'mousedown', 'touchstart']) {
+  app.addEventListener(
+    type,
+    (e) => {
+      const sel = view === 'editor' && e.target.closest?.('select[data-giver]');
+      if (sel) showNotesInPicker(sel, true);
+    },
+    { passive: true }
+  );
+}
+app.addEventListener('focusout', (e) => {
+  if (view === 'editor' && e.target.matches?.('select[data-giver]')) showNotesInPicker(e.target, false);
 });
 app.addEventListener('input', (e) => {
   if (view === 'editor' && e.target.id === 'ed-name') syncEditor();
