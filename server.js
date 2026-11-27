@@ -413,11 +413,12 @@ app.get(
   })
 );
 
-// Una quiniela válida: cada invitado regala exactamente una vez y recibe exactamente una vez.
+// Una quiniela válida: cada invitado regala exactamente una vez y recibe exactamente una vez, y
+// nadie se regala a sí mismo. A diferencia del sorteo real, en la quiniela sí se permite predecir
+// un regalo dentro de la misma familia.
 function validatePredictions(predictions) {
   const guests = allGuests();
   const byId = new Map(guests.map((g) => [g.id, g]));
-  const avoid = getSetting('avoid_same_family') === '1';
   if (!Array.isArray(predictions) || predictions.length !== guests.length) throw new HttpError(400, 'La quiniela debe estar completa: un destinatario para cada invitado.');
   const givers = new Set();
   const receivers = new Set();
@@ -426,7 +427,6 @@ function validatePredictions(predictions) {
     const r = byId.get(Number(p?.receiver_id));
     if (!g || !r) throw new HttpError(400, 'Hay invitados inválidos en la quiniela.');
     if (g.id === r.id) throw new HttpError(400, `${g.name} no puede regalarse a sí mismo.`);
-    if (avoid && g.family_id === r.family_id) throw new HttpError(400, `${g.name} y ${r.name} son de la misma familia.`);
     if (givers.has(g.id)) throw new HttpError(400, `${g.name} aparece dos veces como quien regala.`);
     if (receivers.has(r.id)) throw new HttpError(400, `${r.name} recibe más de un regalo.`);
     givers.add(g.id);

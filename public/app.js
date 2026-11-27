@@ -634,7 +634,7 @@ function openEditor(q = null) {
 const editorSnapshot = () => JSON.stringify([$('#ed-name')?.value.trim() || '', editorSelects().map((s) => s.value)]);
 
 function renderEditor() {
-  const { guests, me, avoidSameFamily } = state;
+  const { guests, me } = state;
   const edit = editor?.edit;
   setNav({
     title: edit ? 'Editar quiniela' : 'Nueva quiniela',
@@ -647,10 +647,11 @@ function renderEditor() {
     if (!families.has(g.family_id)) families.set(g.family_id, { name: g.family, members: [] });
     families.get(g.family_id).members.push(g);
   }
+  // En la quiniela se puede elegir a cualquiera (también de la propia familia), menos a uno mismo.
   const optionsFor = (giver) =>
     [...families]
-      .map(([fid, f]) => {
-        const opts = f.members.filter((r) => r.id !== giver.id && (!avoidSameFamily || fid !== giver.family_id));
+      .map(([, f]) => {
+        const opts = f.members.filter((r) => r.id !== giver.id);
         return opts.length ? `<optgroup label="${esc(f.name)}">${opts.map((r) => `<option value="${r.id}">${esc(r.name)}</option>`).join('')}</optgroup>` : '';
       })
       .join('');
@@ -688,7 +689,7 @@ function renderEditor() {
            .join('')}</div></section>`
        )
        .join('')}
-     <p class="section-footer">Cada persona recibe exactamente un regalo${avoidSameFamily ? ' y nadie le regala a alguien de su propia familia' : ''}. Las opciones ya asignadas aparecen deshabilitadas.</p>
+     <p class="section-footer">Cada persona recibe exactamente un regalo y nadie se regala a sí mismo. Las opciones ya asignadas aparecen deshabilitadas.</p>
      <div class="mt-28"><button class="btn block" type="button" id="ed-save" disabled>${saveLabel()}</button></div>`
   );
   if (edit) {
@@ -745,11 +746,12 @@ function syncEditor() {
   editor.dirty = editor.edit ? editorSnapshot() !== editor.initial : filled > 0 || !!$('#ed-name')?.value.trim();
 }
 
-// "Al azar": usa el mismo sorteo uniforme y criptográfico del servidor (draw.js). Es
-// independiente del sorteo real, que ni siquiera existe mientras las quinielas están abiertas.
+// "Al azar": usa el mismo sorteo uniforme y criptográfico del servidor (draw.js), pero con la
+// regla de la quiniela: cualquiera menos uno mismo (la familia sí se permite). Es independiente
+// del sorteo real, que ni siquiera existe mientras las quinielas están abiertas.
 function randomAssignment() {
   try {
-    return Sorteo.generate(state.guests, { avoidFamily: state.avoidSameFamily, timeLimitMs: 300 }).draw;
+    return Sorteo.generate(state.guests, { avoidFamily: false, timeLimitMs: 300 }).draw;
   } catch {
     return null;
   }

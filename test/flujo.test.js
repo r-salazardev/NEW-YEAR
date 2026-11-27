@@ -92,20 +92,25 @@ test('flujo completo: lista → quinielas → sorteo → papelitos → resultado
     'no soy un arreglo',
     good.map((p, i) => (i === 0 ? { ...p, receiver_id: 99999 } : p)), // invitado inexistente
   ];
-  // misma familia
-  const sameFam = good.map((p) => ({ ...p }));
-  const a = sameFam.find((p) => famOf.get(p.giver_id) === 1);
-  const mate = guests.find((x) => x.family_id === 1 && x.id !== a.giver_id).id;
-  const other = sameFam.find((p) => p.receiver_id === mate);
-  [a.receiver_id, other.receiver_id] = [mate, a.receiver_id];
-  bad.push(sameFam);
   for (const predictions of bad) {
     const r = await call('POST', '/api/quinielas', { ...me(g0), body: { predictions } });
     assert.equal(r.status, 400, `debió rechazarse: ${JSON.stringify(r.data)}`);
   }
 
-  // Cada quien llena una quiniela "al azar".
+  // En la quiniela SÍ se permite predecir un regalo dentro de la misma familia (aunque el sorteo
+  // real lo evite); sólo regalarse a sí mismo está prohibido.
   const quinielas = new Map();
+  const sameFam = good.map((p) => ({ ...p }));
+  const a = sameFam.find((p) => famOf.get(p.giver_id) === 1);
+  const mate = guests.find((x) => x.family_id === 1 && x.id !== a.giver_id).id;
+  const other = sameFam.find((p) => p.receiver_id === mate);
+  [a.receiver_id, other.receiver_id] = [mate, a.receiver_id];
+  assert.ok(sameFam.every((p) => p.giver_id !== p.receiver_id), 'la prueba no debe incluir a nadie regalándose a sí mismo');
+  const famRes = await call('POST', '/api/quinielas', { ...me(g0), body: { name: 'Q familia', predictions: sameFam } });
+  assert.equal(famRes.status, 200, `debió aceptarse: ${JSON.stringify(famRes.data)}`);
+  quinielas.set(famRes.data.id, sameFam);
+
+  // Cada quien llena una quiniela "al azar".
   for (const g of guests) {
     const predictions = [...Sorteo.generate(guests, { avoidFamily: true }).draw].map(([giver_id, receiver_id]) => ({ giver_id, receiver_id }));
     const r = await call('POST', '/api/quinielas', { ...me(g), body: { name: `Q ${g.name}`, predictions, acceptedCostCents: 0 } });
