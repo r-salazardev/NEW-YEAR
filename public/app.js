@@ -265,6 +265,15 @@ function openPinSheet(guest) {
         setMsg('Verificando…');
         try {
           await api('/api/claim', { method: 'POST', body: { guestId: guest.id, pin } });
+          // Confirmación breve y, mientras, se arma la pantalla de la persona DETRÁS de la hoja.
+          // Así, al cerrarse la hoja ya se ve su pantalla y no la lista de nombres.
+          setMsg('¡Listo! Entrando…');
+          msgEl.classList.add('ok');
+          wrap.classList.add('ok');
+          boxes.forEach((b) => b.classList.add('filled'));
+          search = '';
+          await Promise.all([load(), ui.sleep(ui.reducedMotion() ? 0 : 500)]);
+          window.scrollTo(0, 0);
           close(true);
         } catch (err) {
           input.disabled = false;
@@ -308,13 +317,7 @@ function openPinSheet(guest) {
       paint();
     },
     { label: `Entrar como ${guest.name}`, size: 'large' }
-  ).then((ok) => {
-    if (ok) {
-      search = '';
-      window.scrollTo(0, 0);
-      return load();
-    }
-  });
+  ); // al entrar, la pantalla ya se cargó antes de cerrar la hoja (ver submit)
 }
 
 // ===========================================================================
