@@ -622,6 +622,36 @@ admin.post(
   })
 );
 
+// Pantalla de revelación: todo lo necesario para revelar uno por uno quién le regala a quién y
+// recalcular las quinielas en vivo. Con los resultados ya revelados no pide contraseña; antes,
+// igual que la pestaña Sorteo, hay que escribirla otra vez.
+admin.post(
+  '/presentation',
+  wrap((req) => {
+    const phase = getSetting('phase');
+    if (phase !== 'drawing' && phase !== 'revealed') throw new HttpError(400, 'La pantalla está disponible cuando inicie el sorteo.');
+    if (phase !== 'revealed') {
+      const wait = drawUnlockLimiter.blockedFor(req.ip);
+      if (wait) throw new HttpError(429, `Demasiados intentos. Espera ${minutes(wait)} min.`);
+      const password = req.body?.password;
+      if (typeof password !== 'string' || !safeEqual(password, ADMIN_PASSWORD)) {
+        drawUnlockLimiter.fail(req.ip);
+        throw new HttpError(403, 'Contraseña incorrecta.');
+      }
+      drawUnlockLimiter.clear(req.ip);
+    }
+    const guests = allGuests().map(({ id, name, family }) => ({ id, name, family }));
+    const pairs = db.prepare('SELECT giver_id, receiver_id FROM assignments').all().map((a) => [a.giver_id, a.receiver_id]);
+    const preds = db.prepare('SELECT giver_id, receiver_id FROM predictions WHERE quiniela_id = ?');
+    const quinielas = db
+      .prepare('SELECT q.id, q.name, q.author_id, g.name AS author, q.created_at FROM quinielas q JOIN guests g ON g.id = q.author_id ORDER BY q.created_at, q.id')
+      .all()
+      .map((q) => ({ ...q, predictions: preds.all(q.id).map((p) => [p.giver_id, p.receiver_id]) }));
+    const potCents = db.prepare('SELECT COALESCE(SUM(cost_cents), 0) AS t FROM quinielas').get().t;
+    return { eventName: getSetting('event_name'), phase, guests, pairs, quinielas, potCents };
+  })
+);
+
 admin.post(
   '/settings',
   wrap((req) => {

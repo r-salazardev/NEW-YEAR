@@ -42,6 +42,7 @@ async function act(fn) {
 function logout() {
   key = '';
   lockDraw();
+  stage.close();
   try {
     sessionStorage.removeItem('adminKey');
   } catch {}
@@ -169,6 +170,9 @@ function statusHTML() {
   } else {
     body = 'Todos pueden ver quién le regaló a quién y el ranking de quinielas.';
     actions = `<button class="btn block gray" type="button" data-act="unreveal">Ocultar resultados</button>`;
+  }
+  if (phase === 'drawing' || phase === 'revealed') {
+    actions += `<button class="btn block tinted" type="button" data-act="stage" style="margin-top:10px">${icon('sparkles')} Pantalla de revelación</button>`;
   }
   const pct = progress && guests.length ? Math.round((progress[0] / guests.length) * 100) : 0;
 
@@ -587,9 +591,73 @@ function renderSettings(body) {
   });
 }
 
+// ---------------------------------------------------------------- Pantalla de revelación
+function openStageSheet() {
+  const needsPw = state.phase !== 'revealed';
+  sheet(
+    (panel, close) => {
+      panel.innerHTML = `
+        ${ui.sheetBar('Pantalla de revelación')}
+        <div class="section" style="margin-top:8px"><div class="group">
+          <div class="cell has-icon"><span class="icon-tile navy">${icon('gift')}</span>
+            <span class="cell-body"><span class="cell-title">Revela uno por uno</span><span class="cell-sub">Toca a cada invitado para mostrar, con animación, a quién le regala.</span></span></div>
+          <div class="cell has-icon"><span class="icon-tile red">${icon('trophy')}</span>
+            <span class="cell-body"><span class="cell-title">Quiniela en vivo</span><span class="cell-sub">El ranking se recalcula con cada papelito revelado y al final se anuncia la quiniela ganadora.</span></span></div>
+          <div class="cell has-icon"><span class="icon-tile gray">${icon('key')}</span>
+            <span class="cell-body"><span class="cell-title">Atajos</span><span class="cell-sub">Espacio: revelar al azar o continuar · F: pantalla completa</span></span></div>
+        </div>
+        <p class="section-footer">El avance se guarda en este dispositivo: si cierras la pantalla, retomas donde te quedaste. Conéctalo a la tele o al proyector antes de abrirla.</p></div>
+        <form id="stage-form" autocomplete="off">
+          ${
+            needsPw
+              ? `<div class="group"><label class="cell"><span class="cell-title">Contraseña</span>
+                  <input class="field-inline" id="stage-pw" type="password" autocomplete="current-password" required placeholder="Requerida" data-autofocus></label></div>`
+              : ''
+          }
+          <p class="section-footer" id="stage-msg">${
+            needsPw ? 'Muestra quién le regala a quién: escribe otra vez la contraseña y ábrela sólo frente a todos.' : 'Los resultados ya están revelados.'
+          }</p>
+          <div style="margin-top:20px"><button class="btn block gold" type="submit">${icon('sparkles')} Abrir pantalla completa</button></div>
+        </form>`;
+      $('[data-close]', panel).addEventListener('click', () => close());
+      const form = $('#stage-form', panel);
+      form.addEventListener('submit', (e) => {
+        e.preventDefault();
+        // Pedir pantalla completa aquí mismo, mientras el navegador lo cuenta como acción del usuario.
+        stage.enterFullscreen();
+        const input = $('#stage-pw', panel);
+        busy($('button[type=submit]', form), async () => {
+          try {
+            const data = await api('/presentation', { method: 'POST', body: { password: input?.value || '' } });
+            close();
+            stage.open(data);
+          } catch (err) {
+            stage.exitFullscreen();
+            if (err.status === 401) {
+              close();
+              logout();
+              toast('Tu sesión de organizador expiró.', 'err');
+              return;
+            }
+            const msg = $('#stage-msg', panel);
+            msg.textContent = err.message;
+            msg.style.color = '#e5243b';
+            if (input) {
+              input.value = '';
+              input.focus();
+            }
+          }
+        });
+      });
+    },
+    { label: 'Pantalla de revelación' }
+  );
+}
+
 // ---------------------------------------------------------------- Acciones de fase
 async function phaseAction(name, btn) {
   const { guests } = state;
+  if (name === 'stage') return openStageSheet();
   if (name === 'copy') {
     const link = location.origin + '/';
     try {
@@ -692,7 +760,7 @@ window.addEventListener('beforeunload', (e) => {
 
 // Refresco automático de participantes.
 setInterval(() => {
-  if (!key || !state || document.hidden || document.querySelector('dialog[open]')) return;
+  if (!key || !state || document.hidden || document.querySelector('dialog[open]') || stage.isOpen()) return;
   if (tab !== 'people' && tab !== 'draw') {
     // No tocar formularios en edición; sólo el encabezado.
     act(() => api('/state')).then((n) => {

@@ -158,8 +158,26 @@ test('flujo completo: lista → quinielas → sorteo → papelitos → resultado
   assert.equal((await call('POST', '/api/admin/draw', { body: { password: ADMIN } })).status, 401);
   assert.equal(new Set(draw.values()).size, guests.length, 'cada quien recibe exactamente un regalo');
 
+  // Pantalla de revelación: antes de revelar pide la contraseña otra vez; trae parejas y quinielas.
+  assert.equal((await adm('POST', '/presentation')).status, 403);
+  assert.equal((await adm('POST', '/presentation', { password: 'otra' })).status, 403);
+  const pres = await adm('POST', '/presentation', { password: ADMIN });
+  assert.equal(pres.status, 200);
+  assert.equal(pres.data.guests.length, 12);
+  assert.equal(pres.data.pairs.length, 12);
+  for (const [g, r] of pres.data.pairs) assert.equal(r, draw.get(g));
+  assert.equal(pres.data.quinielas.length, quinielas.size);
+  for (const q of pres.data.quinielas) {
+    assert.deepEqual(
+      new Map(q.predictions),
+      new Map(quinielas.get(q.id).map((p) => [p.giver_id, p.receiver_id]))
+    );
+  }
+  assert.equal((await call('POST', '/api/admin/presentation', { body: { password: ADMIN } })).status, 401);
+
   // Resultados: parejas y aciertos cuadran.
   assert.equal((await adm('POST', '/reveal')).status, 200);
+  assert.equal((await adm('POST', '/presentation')).status, 200, 'ya revelados no pide contraseña');
   const { data: res } = await call('GET', '/api/results');
   for (const p of res.pairs) assert.equal(byName.get(p.receiver).id, draw.get(byName.get(p.giver).id));
   for (const q of res.leaderboard) {
