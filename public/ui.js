@@ -507,6 +507,38 @@ const ui = (() => {
       </header>`;
   }
 
+  /**
+   * Pantalla de carga a pantalla completa (encima de todo, incluso de hojas abiertas).
+   * `mark`: HTML del centro (p. ej. un avatar); por defecto, el ícono de regalo.
+   * Devuelve { hide() } que la desvanece y la quita.
+   */
+  function loadingScreen({ mark = '', title = '', sub = '' } = {}) {
+    const dlg = document.createElement('dialog');
+    dlg.className = 'loading-screen';
+    dlg.setAttribute('aria-label', title || 'Cargando');
+    dlg.setAttribute('aria-busy', 'true');
+    dlg.innerHTML = `<span class="ny-stars" aria-hidden="true"></span>
+      <div class="ls-center" tabindex="-1">
+        <span class="ls-mark">${mark || `<span class="ls-gift">${icon('gift')}</span>`}<span class="ls-ring" aria-hidden="true"></span></span>
+        ${title ? `<h2>${esc(title)}</h2>` : ''}
+        ${sub ? `<p>${esc(sub)}</p>` : ''}
+        <span class="ls-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+      </div>`;
+    dlg.addEventListener('cancel', (e) => e.preventDefault()); // no se cierra con Escape
+    document.body.appendChild(dlg);
+    dlg.showModal();
+    $('.ls-center', dlg).focus({ preventScroll: true }); // quita el foco del campo: baja el teclado
+    requestAnimationFrame(() => dlg.classList.add('open'));
+    return {
+      async hide() {
+        dlg.classList.remove('open');
+        await sleep(reducedMotion() ? 0 : 380);
+        dlg.close();
+        dlg.remove();
+      },
+    };
+  }
+
   /** Lluvia de confeti dorado. No hace nada si el usuario pidió menos movimiento. */
   function confetti({ count = 140, duration = 2600 } = {}) {
     if (reducedMotion()) return;
@@ -578,5 +610,5 @@ const ui = (() => {
     return update;
   }
 
-  return { $, $$, esc, sleep, icon, sheetBar, avatar, relTime, plural, money, request, sheet, alert, confirm, toast, busy, watchNavbar, reducedMotion, hero, confetti };
+  return { $, $$, esc, sleep, icon, sheetBar, avatar, relTime, plural, money, request, sheet, alert, confirm, toast, busy, watchNavbar, reducedMotion, hero, confetti, loadingScreen };
 })();

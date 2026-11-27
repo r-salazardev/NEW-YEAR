@@ -265,16 +265,24 @@ function openPinSheet(guest) {
         setMsg('Verificando…');
         try {
           await api('/api/claim', { method: 'POST', body: { guestId: guest.id, pin } });
-          // Confirmación breve y, mientras, se arma la pantalla de la persona DETRÁS de la hoja.
-          // Así, al cerrarse la hoja ya se ve su pantalla y no la lista de nombres.
-          setMsg('¡Listo! Entrando…');
+          // PIN correcto: cajas en verde un instante y luego una pantalla de carga encima de todo.
+          // Debajo se cierra la hoja (y el teclado) y se arma la pantalla de la persona; la
+          // pantalla de carga se desvanece cuando ya está lista, sin dejar ver la lista de nombres.
+          setMsg('¡Listo!');
           msgEl.classList.add('ok');
           wrap.classList.add('ok');
           boxes.forEach((b) => b.classList.add('filled'));
-          search = '';
-          await Promise.all([load(), ui.sleep(ui.reducedMotion() ? 0 : 500)]);
-          window.scrollTo(0, 0);
+          await ui.sleep(ui.reducedMotion() ? 0 : 280);
+          const loader = ui.loadingScreen({
+            mark: avatar(guest.name, 'lg'),
+            title: `¡Hola, ${firstName(guest.name)}!`,
+            sub: 'Preparando tu intercambio…',
+          });
           close(true);
+          search = '';
+          await Promise.all([load(), ui.sleep(ui.reducedMotion() ? 0 : 1100)]);
+          window.scrollTo(0, 0);
+          await loader.hide();
         } catch (err) {
           input.disabled = false;
           if (mode === 'confirm') {
