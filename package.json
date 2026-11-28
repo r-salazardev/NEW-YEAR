@@ -9,7 +9,8 @@
   "scripts": {
     "start": "node --no-warnings=ExperimentalWarning server.js",
     "dev": "node --no-warnings=ExperimentalWarning --watch server.js",
-    "test": "node --no-warnings=ExperimentalWarning --test test/"
+    "test": "node --no-warnings=ExperimentalWarning --test test/",
+    "demo": "node scripts/llenar-demo.js"
   },
   "dependencies": {
     "express": "^4.21.2"

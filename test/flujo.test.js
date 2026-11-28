@@ -210,7 +210,7 @@ test('flujo completo: lista → quinielas → sorteo → papelitos → resultado
   const pres = await adm('POST', '/presentation', { password: ADMIN });
   assert.equal(pres.status, 200);
   assert.equal(pres.data.guests.length, 12);
-  assert.equal(pres.data.guests.find((g) => g.id === noted.id).note, 'es la mamá de Anette');
+  assert.equal(pres.data.guests.find((g) => g.id === noted.id).note, undefined, 'la pantalla de revelación no muestra notas');
   assert.equal(pres.data.pairs.length, 12);
   for (const [g, r] of pres.data.pairs) assert.equal(r, draw.get(g));
   assert.equal(pres.data.quinielas.length, quinielas.size);

@@ -675,7 +675,8 @@ admin.post(
       }
       drawUnlockLimiter.clear(req.ip);
     }
-    const guests = allGuests().map(({ id, name, family, note }) => ({ id, name, family, note }));
+    // Sin notas: la pantalla se proyecta frente a todos.
+    const guests = allGuests().map(({ id, name, family }) => ({ id, name, family }));
     const pairs = db.prepare('SELECT giver_id, receiver_id FROM assignments').all().map((a) => [a.giver_id, a.receiver_id]);
     const preds = db.prepare('SELECT giver_id, receiver_id FROM predictions WHERE quiniela_id = ?');
     const quinielas = db

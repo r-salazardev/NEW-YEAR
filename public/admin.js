@@ -349,8 +349,8 @@ function openGuestSheet(g) {
         const fams = picked();
         noteBtn.disabled = norm(noteInput.value) === (g.note || '') && sameSet(fams, g.note_families || []);
         $('#g-note-who', panel).textContent = fams.length
-          ? `Sólo la ${fams.length === 1 ? 've esa familia' : `ven esas ${fams.length} familias`}; el resto no la ve en su papelito ni en las quinielas. En la pantalla de revelación siempre se muestra.`
-          : 'Si no marcas ninguna, la ven todos. En la pantalla de revelación siempre se muestra.';
+          ? `Sólo la ${fams.length === 1 ? 've esa familia' : `ven esas ${fams.length} familias`}; el resto no la ve en su papelito ni en las quinielas. Nunca sale en la pantalla de revelación.`
+          : 'Si no marcas ninguna, la ven todos. Nunca sale en la pantalla de revelación.';
       };
       syncNote();
       noteInput.addEventListener('input', syncNote);
